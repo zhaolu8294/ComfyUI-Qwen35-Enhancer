@@ -36,7 +36,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/4] 推送到 GitHub...
-git push
+git push -u origin main
 if errorlevel 1 (
     echo.
     echo [错误] 推送失败。常见原因：
