@@ -18,13 +18,19 @@ if errorlevel 1 goto no_git
 
 git add -A
 git diff --cached --quiet
-if not errorlevel 1 goto nothing
+if not errorlevel 1 goto no_changes
 
 echo.
 echo [2/4] Committing...
 git commit -m "chore: sync local changes"
 if errorlevel 1 goto commit_fail
+goto do_push
 
+:no_changes
+echo.
+echo [2/4] Nothing to commit - working tree is clean. Continuing to push.
+
+:do_push
 echo.
 echo [3/4] Pushing to GitHub...
 git push -u origin main
@@ -42,12 +48,6 @@ exit /b 0
 echo.
 echo [ERROR] Not a git repository, or git is not installed.
 goto end
-
-:nothing
-echo.
-echo [SKIP] Nothing to commit - working tree is clean.
-pause
-exit /b 0
 
 :commit_fail
 echo.
