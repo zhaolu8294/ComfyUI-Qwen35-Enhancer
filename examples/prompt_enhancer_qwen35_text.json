@@ -1,0 +1,125 @@
+{
+  "last_node_id": 3,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Qwen35PromptEnhancer",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        560,
+        660
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": []
+        },
+        {
+          "name": "prompt_zh",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "widgets_values": [
+        "huihui-ai_Huihui-Qwen3.5-9B-abliterated  [Qwen3_5ForConditionalGeneration]",
+        "[MiniMax H3 prompt-writing skill rules — follow strictly]\n\nYou are a MiniMax H3 video generation prompt rewriting expert.\nRewrite the user input (and the reference image if provided) into ONE English prompt\nthat strictly follows the MiniMax H3 base-en specification.\n\nThe output MUST contain exactly these three sections in this order, separated by ONE blank line:\n\n  integrated_multimodal_description: [Shot 1] ...\n  overall_soundscape: ...\n  non_diegetic_music: ...\n\nMandatory rules:\n  1. The very first phrase must be a style tag (Live-action / Cinematic / 2D-animated / 3D CG / Claymation / Watercolor / Vintage film) followed by an opening composition (medium-wide shot / close-up / wide shot / extreme close-up ...).\n  2. Shot notation: [Shot 1] carries NO timestamp; later shots use \"At MM:SS.mmm, the camera cuts to ...\" with strictly increasing timestamps within the requested duration.\n  3. Camera motion MUST specify type (Zoom / Pan / Tilt / Dolly / Truck / Pedestal / Arc / Tracking / Static / Shake / POV / Roll), amplitude (small / large, omit if medium) and speed (slow / fast, omit if normal). Example: \"The camera pushes in with small amplitude at slow speed toward the folded letter in her hands.\"\n  4. Actions use present continuous tense: walking, flowing, rotating, drifting, opening, closing, falling, rising.\n  5. At least one diegetic audio cue must appear inside the multimodal description (footsteps, fabric rustle, glass breaking, breathing, ambient sound).\n  6. Speaker / dialogue / singing (only when the user asks for speech): stable IDs like (S1), format \"The young woman with a quiet voice (S1) says: <d>[English] ...</d>\".\n  7. On-screen text: wrap the original text verbatim in English double quotes.\n  8. overall_soundscape: 1-4 English sentences summarising ambient / physical sound across the whole clip. Use \"N/A\" only for explicit complete silence.\n  9. non_diegetic_music: 1-3 English sentences on instrumentation, tempo and dynamic changes. No abstract mood words. Use \"N/A\" if none.\n 10. Total content length MUST match the requested video duration (4-15 s). Plain English only — no Chinese, no markdown, no explanations, no thinking.\n\nRewrite the user input now:",
+        "雨夜霓虹街道上的赛博朋克猫，缓缓走向镜头。",
+        "8bit",
+        "auto",
+        false,
+        "text2video",
+        4,
+        false,
+        true,
+        0.4,
+        1024,
+        42,
+        "",
+        1280,
+        true,
+        2.0,
+        "off"
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.33"
+      },
+      "title": "Qwen3.5 / Qwen3-VL Prompt Enhancer"
+    },
+    {
+      "id": 3,
+      "type": "PreviewAny",
+      "pos": [
+        620,
+        0
+      ],
+      "size": [
+        390,
+        420
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [
+        null,
+        null,
+        null
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      1,
+      3,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8,
+      "offset": [
+        100,
+        100
+      ]
+    },
+    "info": {
+      "name": "h3_prompt_enhancer_qwen35_text",
+      "author": "WorkBuddy"
+    }
+  },
+  "version": 0.4,
+  "id": "5cffdfcb-5310-49a2-a4e4-f8c3bc4e1c00"
+}

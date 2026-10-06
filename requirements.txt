@@ -1,0 +1,17 @@
+# ComfyUI 环境已自带 torch，此处不重复声明
+transformers>=5.0.0
+accelerate>=0.26.0
+bitsandbytes>=0.43.0
+Pillow
+
+# flash-attn 是可选的，但强烈建议装 —— 它是图片 prefill 快慢的分水岭。
+# Qwen3-VL 的视觉塔只有走 flash 路径才用 cu_seqlens 一次性变长处理，否则
+# 退化成「逐图切块 + Python 循环」，实测每视觉 token 约 33ms，两张 768p
+# 参考图 prefill 要 30~80 秒（占整轮一半）。
+#
+# 不要在这里直接写 flash-attn —— 源码编译在 Windows 上极易失败（要匹配
+# torch 的 CUDA 大版本，且要装齐 CUDA Toolkit）。装预编译 wheel 更省事：
+#   PyPI 上无 Windows wheel，用社区预编译仓库
+#   （Windows + py3.13 + torch2.9 + cu130 对应的文件名形如
+#    flash_attn-2.8.3+cu130torch2.9-cp313-cp313-win_amd64.whl）
+#   装好后 attention 下拉选 auto 即可自动启用。

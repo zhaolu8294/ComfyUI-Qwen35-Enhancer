@@ -1,0 +1,25 @@
+[project]
+name = "qwen-h3-prompt-enhancer"
+version = "1.0.0"
+description = "Expand simple prompts into MiniMax H3 spec-compliant video descriptions using local Qwen multimodal models. Supports text2video, image2video and multi-image reference."
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    # ComfyUI 环境已自带 torch，此处不重复声明
+    "transformers>=5.0.0",
+    "accelerate>=0.26.0",
+    "bitsandbytes>=0.43.0",
+    "Pillow",
+]
+classifiers = [
+    "Operating System :: OS Independent",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+
+[project.urls]
+Repository = "https://github.com/zhaolu8294/ComfyUI-Qwen35-Enhancer"
+"Bug Tracker" = "https://github.com/zhaolu8294/ComfyUI-Qwen35-Enhancer/issues"
+
+[tool.comfy]
+PublisherId = "zhaolu8294"
+DisplayName = "Qwen H3 Prompt Enhancer"
