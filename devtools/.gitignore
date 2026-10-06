@@ -1,0 +1,2 @@
+# verify_qwen35_patch.py 会在脚本同级写临时基准文件
+_tmp_*

@@ -1,0 +1,10 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+============================================================================================
+真实模型量化 A/B   mode=4bit
+============================================================================================
+torch 2.9.1+cu130  cuda 13.0  gpu NVIDIA GeForce RTX 4090 D
+载入前可用显存 22.54 GiB / 23.99 GiB
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]

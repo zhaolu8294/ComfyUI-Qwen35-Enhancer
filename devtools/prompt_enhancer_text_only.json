@@ -1,0 +1,254 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "PrimitiveStringMultiline",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        480,
+        300
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "widgets_values": [
+        "[MiniMax H3 prompt-writing skill rules — follow strictly]\n\nYou are a MiniMax H3 video generation prompt rewriting expert.\nRewrite the input into a single English prompt that strictly follows the MiniMax H3 base-en specification.\n\nThe output MUST contain exactly these three sections in this order, separated by ONE blank line:\n\n  integrated_multimodal_description: [Shot 1] ...\n  overall_soundscape: ...\n  non_diegetic_music: ...\n\nMandatory rules:\n  1. First phrase must be a style tag (Live-action, Cinematic, 2D-animated, 3D CG, Claymation, Watercolor, Vintage film) followed by an opening composition (medium-wide shot / close-up / wide shot / etc.).\n  2. Shot notation: [Shot 1] has NO timestamp; subsequent shots use \"At MM:SS.mmm, the camera cuts to ...\" with strictly increasing timestamps.\n  3. Camera motion MUST specify type (Zoom/Pan/Tilt/Dolly/Tracking/Arc/Static/Shake/POV/Roll), amplitude (small/large or omit), speed (slow/fast or omit). Example: \"The camera pushes in with small amplitude at slow speed toward ...\"\n  4. Actions use present continuous tense: walking, flowing, rotating, drifting, opening, closing, falling, rising.\n  5. Include at least one diegetic audio cue in the multimodal description (footsteps, fabric rustle, glass breaking, breathing, ambient sound).\n  6. Speakers/dialogue use stable IDs and <d>[English]...</d> tags only when user requests speech.\n  7. On-screen text uses English double quotes wrapping the original text verbatim.\n  8. overall_soundscape: 1-4 English sentences summarizing ambient/physical sounds. Use \"N/A\" only when complete silence.\n  9. non_diegetic_music: 1-3 English sentences on instrumentation, tempo, dynamic changes. No abstract mood words. Use \"N/A\" if none.\n 10. Total content length MUST match the requested video duration (4-15 seconds). Do NOT include thinking, explanations, or markdown.\n\nNow rewrite the following user input (and optional image description if provided) into the H3 format:\n\n---\n\nUser input: "
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.33"
+      }
+    },
+    {
+      "id": 2,
+      "type": "PrimitiveStringMultiline",
+      "pos": [
+        420,
+        0
+      ],
+      "size": [
+        480,
+        300
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "widgets_values": [
+        "雨夜霓虹街道上的赛博朋克猫，缓缓走向镜头。"
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.33"
+      }
+    },
+    {
+      "id": 3,
+      "type": "JoinStringMulti",
+      "pos": [
+        840,
+        0
+      ],
+      "size": [
+        315,
+        100
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "string_1",
+          "type": "STRING",
+          "link": 1,
+          "slot_index": 0
+        },
+        {
+          "name": "string_2",
+          "type": "STRING",
+          "link": 2,
+          "slot_index": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "string",
+          "type": "STRING",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "widgets_values": [
+        2,
+        "\n\n",
+        false
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.33"
+      }
+    },
+    {
+      "id": 4,
+      "type": "Qwen3_VQA",
+      "pos": [
+        1260,
+        0
+      ],
+      "size": [
+        315,
+        100
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 3,
+          "slot_index": 0
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "widgets_values": [
+        "",
+        "Qwen3-VL-8B-Instruct",
+        "none",
+        false,
+        0.4,
+        1920,
+        156800,
+        1003520,
+        -1,
+        "eager"
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.33"
+      }
+    },
+    {
+      "id": 5,
+      "type": "show_text_party",
+      "pos": [
+        0,
+        220
+      ],
+      "size": [
+        315,
+        100
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 4,
+          "slot_index": 0
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "widgets_values": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.33",
+        "hidden_inputs": {
+          "unique_id": "UNIQUE_ID",
+          "extra_pnginfo": "EXTRA_PNGINFO"
+        }
+      }
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "STRING"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "STRING"
+    ],
+    [
+      4,
+      4,
+      0,
+      5,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.75,
+      "offset": [
+        100,
+        100
+      ]
+    },
+    "info": {
+      "name": "prompt_enhancer_text_only",
+      "author": "WorkBuddy"
+    }
+  },
+  "version": 0.4
+}

@@ -1,0 +1,61 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+================================================================================================
+Qwen3.5-9B 投影成本 严格 A/B 交替法  REPS=8 ROUNDS=5
+================================================================================================
+torch 2.9.1+cu130  cuda 13.0  bnb 0.49.2  gpu NVIDIA GeForce RTX 4090 D
+可用显存 22.54 GiB / 23.99 GiB
+
+【threshold=6.0 的含义】batch=1 时 absmax 就是那个值本身，|x|>6 才算离群
+  宽度 4096    RMS=1:   0 列(0.00%)   RMS=3: 201 列(4.91%)
+  宽度 8192    RMS=1:   0 列(0.00%)   RMS=3: 391 列(4.77%)
+  宽度 12288   RMS=1:   0 列(0.00%)   RMS=3: 547 列(4.45%)
+
+================================================================================================
+线性注意力投影×24   （120 次 Linear 调用，1.62 B 参数）
+================================================================================================
+  int8 t=6.0  
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\bitsandbytes\autograd\_functions.py:123: UserWarning: MatMul8bitLt: inputs will be cast from torch.bfloat16 to float16 during quantization
+  warnings.warn(f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization")
+    batch=1    bf16    3.995 ms ( 754 GB/s) | int8 t=6.0   22.435 ms (  67 GB/s)  ->   5.62x  有限值OK
+    batch=256  bf16    7.557 ms ( 399 GB/s) | int8 t=6.0   26.083 ms (  58 GB/s)  ->   3.45x  有限值OK
+  int8 t=0.0  
+    batch=1    bf16    3.976 ms ( 757 GB/s) | int8 t=0.0   12.829 ms ( 117 GB/s)  ->   3.23x  有限值OK
+    batch=256  bf16    7.566 ms ( 398 GB/s) | int8 t=0.0   13.783 ms ( 109 GB/s)  ->   1.82x  有限值OK
+  4bit nf4    
+    batch=1    bf16    3.967 ms ( 759 GB/s) | 4bit nf4    7.718 ms (  98 GB/s)  ->   1.95x  有限值OK
+    batch=256  bf16    7.534 ms ( 400 GB/s) | 4bit nf4   12.233 ms (  62 GB/s)  ->   1.62x  有限值OK
+
+================================================================================================
+全注意力投影×8   （32 次 Linear 调用，0.34 B 参数）
+================================================================================================
+  int8 t=6.0  
+    batch=1    bf16    0.849 ms ( 736 GB/s) | int8 t=6.0    6.120 ms (  51 GB/s)  ->   7.21x  有限值OK
+    batch=256  bf16    1.656 ms ( 377 GB/s) | int8 t=6.0    7.123 ms (  44 GB/s)  ->   4.30x  有限值OK
+  int8 t=0.0  
+    batch=1    bf16    0.849 ms ( 737 GB/s) | int8 t=0.0    3.546 ms (  88 GB/s)  ->   4.18x  有限值OK
+    batch=256  bf16    1.656 ms ( 378 GB/s) | int8 t=0.0    3.573 ms (  87 GB/s)  ->   2.16x  有限值OK
+  4bit nf4    
+    batch=1    bf16    0.849 ms ( 736 GB/s) | 4bit nf4    2.031 ms (  77 GB/s)  ->   2.39x  有限值OK
+    batch=256  bf16    1.665 ms ( 375 GB/s) | 4bit nf4    3.442 ms (  45 GB/s)  ->   2.07x  有限值OK
+
+================================================================================================
+MLP×32   （96 次 Linear 调用，4.83 B 参数）
+================================================================================================
+  int8 t=6.0   构建失败: OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB. GPU 0 has a total cap
+  int8 t=0.0   构建失败: OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB. GPU 0 has a total cap
+  4bit nf4    
+    batch=1    bf16   10.522 ms ( 855 GB/s) | 4bit nf4    5.151 ms ( 437 GB/s)  ->   0.49x  有限值OK
+    batch=256  bf16   20.695 ms ( 435 GB/s) | 4bit nf4   33.459 ms (  67 GB/s)  ->   1.62x  有限值OK
+
+================================================================================================
+汇总：相对 bf16 的倍数（>1 慢，<1 快）
+================================================================================================
+  组                          int8 t=6.0 int8 t=0.0   4bit nf4
+  线性注意力投影×24                5.62x/3.45x3.23x/1.82x1.95x/1.62x
+  全注意力投影×8                  7.21x/4.30x4.18x/2.16x2.39x/2.07x
+  MLP×32                             -         -0.49x/1.62x
+
+  说明：每个格里是 batch=1 / batch=256 两个比值。
+
+跑完 2026-10-07 05:54:17

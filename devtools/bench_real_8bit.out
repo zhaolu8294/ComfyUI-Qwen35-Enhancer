@@ -1,0 +1,30 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+============================================================================================
+真实模型量化 A/B   mode=8bit
+============================================================================================
+torch 2.9.1+cu130  cuda 13.0  gpu NVIDIA GeForce RTX 4090 D
+载入前可用显存 22.54 GiB / 23.99 GiB
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Traceback (most recent call last):
+  File "C:\Users\ADMIN\WorkBuddy\2026-10-06-18-56-50\h3_workflow\bench_real_quant.py", line 187, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\ADMIN\WorkBuddy\2026-10-06-18-56-50\h3_workflow\bench_real_quant.py", line 160, in main
+    model = load()
+  File "C:\Users\ADMIN\WorkBuddy\2026-10-06-18-56-50\h3_workflow\bench_real_quant.py", line 69, in load
+    model = AutoModelForImageTextToText.from_pretrained(MODEL, **kw)
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 405, in from_pretrained
+    return model_class.from_pretrained(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        pretrained_model_name_or_path, *model_args, config=config, **hub_kwargs, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\modeling_utils.py", line 4296, in from_pretrained
+    loading_info, disk_offload_index = cls._load_pretrained_model(model, state_dict, checkpoint_files, load_config)
+                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\modeling_utils.py", line 4414, in _load_pretrained_model
+    file_pointer = safe_open(file, framework="pt", device="cpu")
+OSError: 页面文件太小，无法完成操作。 (os error 1455)
