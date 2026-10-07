@@ -140,8 +140,10 @@ def check(fname):
                       f"overwrite={w[9]!r}  format={w[13]!r}")
             if len(w) >= 27:
                 print(f"        bilingual={w[25]!r}  max_output_chars={w[26]!r}")
-            if len(w) != 27:
-                problems.append(f"BatchTagger widgets 应为 27 项，实际 {len(w)}")
+            if len(w) >= 28:
+                print(f"        caption_mode={w[27]!r}")
+            if len(w) != 28:
+                problems.append(f"BatchTagger widgets 应为 28 项，实际 {len(w)}")
             if len(w) >= 14:
                 # system_preset 是动态下拉（选项来自 presets/tagging_system_prompts.json），
                 # 这里只能校验它非空；具体预设名是否有效由 test_qwen35_tagger.py 覆盖。
@@ -159,6 +161,9 @@ def check(fname):
                         problems.append(f"BatchTagger bilingual 非法: {w[25]!r}")
                     if not isinstance(w[26], int) or w[26] < 0:
                         problems.append(f"BatchTagger max_output_chars 非法: {w[26]!r}")
+                if len(w) >= 28:
+                    if w[27] not in ("off", "refine", "refine_or_new"):
+                        problems.append(f"BatchTagger caption_mode 非法: {w[27]!r}")
                 # 只有 preset=custom 时 system_prompt 才会被用到，此时它该是默认那份
                 if w[2] == "custom" and w[3] and "danbooru" not in str(w[3]):
                     notes.append(

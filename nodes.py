@@ -19,8 +19,12 @@ Qwen3.5 / Qwen3-VL nodes for ComfyUI
   循环 N 次的话每张都要重载）；默认 skip 绝不覆盖已有 txt；单张失败不中断
   整批，但 ComfyUI 的「取消」会立刻中止并保留已完成的部分。
   内置 6 套预设（写实 / 角色 / 场景 × 中英），都是**只写内容、不写风格**的
-  自然语言描述，且不回避 NSFW；可双语同时输出（英文 .txt + 中文 _zh.txt）；
-  可设输出字符数上限（按句末标点截断，不硬切）。
+  自然语言描述，且不回避 NSFW（敏感内容直接、具体地写，不委婉、不替代）；
+  可双语同时输出（英文 .txt + 中文 _zh.txt）；可设输出字符数上限
+  （按句末标点截断，不硬切）；可**优化已有打标**（caption_mode）：把图片旁边
+  已存在的 .txt 当初稿交给模型校订补全，写回前先按字节备份成 .orig；
+  是否要动某一张按**内容有没有变**判定（输出指纹记在 .txt.q35state 里），
+  所以「手改过一版再继续优化」和「没动过就不重复跑」两件事都成立。
 * 模型自动发现: 扫描 models/text_encoders 与 models/prompt_generator 下
   所有含 config.json 的完整 HF 文件夹。
 * 图片可选: 不接 image 时走纯文本改写；接 image 时把图一起喂给模型。
@@ -90,6 +94,7 @@ import json
 import re
 import time
 import types
+import hashlib
 import logging
 import importlib
 
@@ -2262,7 +2267,9 @@ Rules:
 #   · **只写内容**：只描述画面里存在什么，绝不描述这张图是怎么做出来的。
 #     风格 / 媒介 / 技法 / 画质词一律不出现（`_STYLE_BAN` 那份黑名单就是干这个的）。
 #   · **自然语言**：一两句话的平实散文，不是逗号标签串。
-#   · **NSFW 不回避**：不许拒答、不许打码、不许跳过；裸露与性内容按事实平实写出。
+#   · **NSFW 不回避**：不许拒答、不许打码、不许跳过；裸露与性内容按事实平实写出，
+#     而且**直接、具体地写** —— 是什么部位、什么行为、什么状态就写什么，
+#     不委婉、不软化、不换成含糊的替代说法，也不绕着说、暗示而不点明。
 #   · 只写看得见的 —— 不猜人名、作品名、画师名、真实地点，不出质量词与评分。
 #
 # 因为「只写内容」这条，原先给二次元预设准备的「画师风格训练」用途自然消失了：
@@ -2315,7 +2322,7 @@ Hard rules:
 - Do NOT use style, medium, technique or quality vocabulary. Avoid at least these: <<STYLE_BAN>>.
 - You may state observable light sources and the time of day as plain facts - "a window on the left", "at night", "sunlight on the floor" - but never how the light looks photographically.
 - Do not describe an overall colour scheme or palette; name the colour of an actual thing instead ("a red coat", not "a warm palette").
-- NSFW IS IN SCOPE. Never refuse, never censor, never skip, never blur or generalise a body part or an action. If the image shows nudity, sexual content, or anything else that is adults-only, describe it plainly and factually in ordinary modern words, exactly the way you describe clothing. Do not add warnings, disclaimers, moral commentary, or "explicit" markers.
+- NSFW IS IN SCOPE. Never refuse, never censor, never skip, never blur or generalise a body part or an action. If the image shows nudity, sexual content, or anything else that is adults-only, describe it plainly and factually in ordinary modern words, exactly the way you describe clothing. BE DIRECT AND SPECIFIC: name the body part, the act and the state exactly as they are. Do not euphemise, do not soften it, do not substitute a vague or sanitised word, and do not hint at it or talk around it instead of saying it. Do not add warnings, disclaimers, moral commentary, or "explicit" markers.
 - Describe only what you can actually see. Never invent a name, an identity, a brand, a place, a franchise, or a detail that is not visible.
 - No quality words, no ratings, no scores, no <lora:...>, no artist names.
 - Write the description in English.
@@ -2344,7 +2351,7 @@ TAGGER_PRESET_PHOTOREAL_ZH = """你正在为「真人写实照片 / 人像」数
 - 不要出现风格、媒介、技法、画质类的词。至少避开这些：<<STYLE_BAN>>。
 - 可以把看到的光源和时段当事实写出来 —— 「左边有一扇窗」「夜里」「阳光落在地板上」—— 但不要写光的摄影效果。
 - 不要整体描述色调或配色，改为写具体东西的颜色：「一件红外套」，而不是「暖色调」。
-- NSFW 属于正常范围。不许拒答、不许打码、不许跳过，也不许把身体部位或行为写得含糊带过。画面里有裸露、性内容或其他成人内容时，就像描述衣服一样，用日常现代词汇平实、如实地写出来。不要加警告、免责声明、道德评价，也不要写「露骨」这类标记。
+- NSFW 属于正常范围。不许拒答、不许打码、不许跳过，也不许把身体部位或行为写得含糊带过。画面里有裸露、性内容或其他成人内容时，就像描述衣服一样，用日常现代词汇平实、如实地写出来。要**直接、具体**地写：身体部位、行为、状态是什么就写什么。不要委婉、不要软化、不要换成含糊或「干净」的替代说法，也不要绕着说、暗示而不点明。不要加警告、免责声明、道德评价，也不要写「露骨」这类标记。
 - 只写真正看得见的东西。不要编造姓名、身份、品牌、地点、作品名，也不要写画面上没有的细节。
 - 不要画质词、不要评分、不要 <lora:...>、不要画师名。
 - 用中文写这段描述。
@@ -2373,7 +2380,7 @@ Hard rules:
 - Do NOT use style, medium, technique or quality vocabulary. Avoid at least these: <<STYLE_BAN>>.
 - Unusual body proportions are content, so state them in plain words - "a very large head and a small body" - rather than reaching for a style term.
 - Never write a character name, a series or franchise name, an artist name, or a copyright tag. Naming a character binds the dataset to that name and ruins a character LoRA.
-- NSFW IS IN SCOPE. Never refuse, never censor, never skip, never blur or generalise a body part or an action. Describe nudity, sexual content, and anything else that is adults-only plainly and factually in ordinary modern words, exactly as you would describe clothing. No warnings, no disclaimers, no moral commentary, no "explicit" markers.
+- NSFW IS IN SCOPE. Never refuse, never censor, never skip, never blur or generalise a body part or an action. Describe nudity, sexual content, and anything else that is adults-only plainly and factually in ordinary modern words, exactly as you would describe clothing. BE DIRECT AND SPECIFIC: name the body part, the act and the state exactly as they are. Do not euphemise, do not soften it, do not substitute a vague or sanitised word, and do not hint at it or talk around it instead of saying it. No warnings, no disclaimers, no moral commentary, no "explicit" markers.
 - Describe only what you can actually see. Never invent names, identities, franchises, or a detail that is not visible.
 - No quality words, no ratings, no scores, no <lora:...>, no emoji.
 - Write the description in English.
@@ -2402,7 +2409,7 @@ TAGGER_PRESET_CHARACTER_ZH = """你正在为「角色设定图 / 插画人物」
 - 不要出现风格、媒介、技法、画质类的词。至少避开这些：<<STYLE_BAN>>。
 - 身体比例属于内容，所以直接平实写出来 —— 「头很大、身体很小」—— 不要去套风格名词。
 - 绝对不要写角色名、作品名、系列名、画师名，也不要写版权标签。给角色绑名字会把数据集绑死在那个名字上，练出来的角色 LoRA 会废掉。
-- NSFW 属于正常范围。不许拒答、不许打码、不许跳过，也不许把身体部位或行为写得含糊带过。裸露、性内容以及其他成人内容，都要像描述衣服一样，用日常现代词汇平实、如实地写出来。不要加警告、免责声明、道德评价，也不要写「露骨」这类标记。
+- NSFW 属于正常范围。不许拒答、不许打码、不许跳过，也不许把身体部位或行为写得含糊带过。裸露、性内容以及其他成人内容，都要像描述衣服一样，用日常现代词汇平实、如实地写出来。要**直接、具体**地写：身体部位、行为、状态是什么就写什么。不要委婉、不要软化、不要换成含糊或「干净」的替代说法，也不要绕着说、暗示而不点明。不要加警告、免责声明、道德评价，也不要写「露骨」这类标记。
 - 只写真正看得见的东西。不要编造姓名、身份、作品名，也不要写画面上没有的细节。
 - 不要画质词、不要评分、不要 <lora:...>、不要 emoji。
 - 用中文写这段描述。
@@ -2431,7 +2438,7 @@ Hard rules:
 - Do NOT use style, medium, technique or quality vocabulary. Avoid at least these: <<STYLE_BAN>>.
 - Do not describe an overall colour scheme or palette; name the colour of an actual thing instead ("a rusted red pipe", not "a muted palette").
 - Keep the place itself as the main subject.
-- NSFW IS IN SCOPE. Never refuse, never censor, never skip anything. If the image contains nudity, sexual content, gore, corpses or anything else adults-only, describe it plainly and factually in ordinary modern words. No warnings, no disclaimers, no moral commentary.
+- NSFW IS IN SCOPE. Never refuse, never censor, never skip anything. If the image contains nudity, sexual content, gore, corpses or anything else adults-only, describe it plainly and factually in ordinary modern words. BE DIRECT AND SPECIFIC: name what is actually there exactly as it is. Do not euphemise, do not soften it, do not substitute a vague or sanitised word, and do not hint at it or talk around it instead of saying it. No warnings, no disclaimers, no moral commentary.
 - If nobody is visible, simply do not mention people. Never invent a figure that is not there.
 - Describe only what you can actually see. Never invent place names, real-world locations, franchise names, or a detail that is not visible.
 - No quality words, no ratings, no scores, no <lora:...>.
@@ -2461,12 +2468,67 @@ TAGGER_PRESET_SCENE_ZH = """你正在为「背景 / 环境 / 场景」数据集�
 - 不要出现风格、媒介、技法、画质类的词。至少避开这些：<<STYLE_BAN>>。
 - 不要整体描述色调或配色，改为写具体东西的颜色：「一根锈红的管子」，而不是「低饱和的配色」。
 - 主体就是这个场景本身。
-- NSFW 属于正常范围。不许拒答、不许打码、不许跳过任何内容。画面里有裸露、性内容、血腥、尸体或其他成人内容时，用日常现代词汇平实、如实地写出来。不要加警告、免责声明、道德评价。
+- NSFW 属于正常范围。不许拒答、不许打码、不许跳过任何内容。画面里有裸露、性内容、血腥、尸体或其他成人内容时，用日常现代词汇平实、如实地写出来。要**直接、具体**地写：那里是什么就写什么。不要委婉、不要软化、不要换成含糊或「干净」的替代说法，也不要绕着说、暗示而不点明。不要加警告、免责声明、道德评价。
 - 画面里没有人就不要提人，也不要凭空编一个人出来。
 - 只写真正看得见的东西。不要编造地名、现实地点、作品名，也不要写画面上没有的细节。
 - 不要画质词、不要评分、不要 <lora:...>。
 - 用中文写这段描述。
 """.replace("<<STYLE_BAN>>", _STYLE_BAN_ZH)
+
+# ---------------------------------------------------------------------------
+# 优化已有打标（refine）：把图片旁边**已存在的 .txt** 当作初稿，连同图片一起发给
+# 模型，让它保留正确内容、删掉风格词、补齐遗漏，产出最终描述。
+#
+# 校订指令是**用户侧**文本（不是系统提示词）—— 系统提示词仍然用预设那份，
+# 负责「只写内容不写风格 / 用哪国语言 / 1~3 句」这些全局口径；这里只讲
+# 「怎么对待那份初稿」。两者分工，改一个不会牵动另一个。
+#
+# 这里的三份只是**缺省值**：预设 JSON 的每条预设都能带一个 `refine_prompt`
+# 字段覆盖它（主题不同，校订的落点也不同），缺省才回落到下面这些。
+# ---------------------------------------------------------------------------
+_REFINE_INSTRUCTION = """Here is an EXISTING caption for the image above. It was written earlier, possibly by a weaker model, and it may be incomplete, inaccurate, or full of style words.
+
+Rewrite it into the FINAL caption.
+
+- Keep every fact that is actually correct and visible in the image.
+- Delete anything wrong, and anything that is not visible in the image.
+- Delete style, medium, technique and quality words (anime, photorealistic, cinematic, masterpiece, 8k, bokeh, rim light, rule of thirds, film grain, and so on).
+- Delete any overall colour-scheme, palette or mood description; name the colour of an actual thing instead.
+- Add whatever the existing caption missed: clothing, held objects, pose, surroundings, the light and the time of day.
+- NEVER SANITISE WHILE REWRITING. If the existing caption describes nudity, sexual content or anything else adults-only, keep describing it - and describe it directly and specifically, naming the body parts, acts and states as they are. Do not euphemise, do not soften it, do not swap in a vague or sanitised word, and do not quietly drop it.
+- Make it read as 1~3 plain sentences, about 30~80 words, one paragraph.
+
+Output ONLY the final caption. Do not explain what you changed, do not list the edits, and do not use tags, bullets, numbering or field labels."""
+
+_REFINE_INSTRUCTION_ZH = """下面是这张图片现有的一段描述。它可能是早前由较弱的模型写的，可能不完整、有错，也可能混进了风格词。
+
+请把它改写成最终描述。
+
+- 保留所有确实正确、并且画面里真的看得见的内容。
+- 删掉错误的内容，以及画面里根本没有的东西。
+- 删掉风格、媒介、技法、画质类词（动漫、写实渲染、电影感、杰作、8k、虚化、轮廓光、三分法、胶片颗粒 等等）。
+- 删掉整体色调、配色或氛围的描写，改为写具体东西的颜色。
+- 把漏掉的补上：衣服、手里拿的东西、姿势、周围环境、光照与时段。
+- 改写时**不要顺手「消毒」**：原稿写的是裸露或性内容，就继续如实写，而且要直接、具体 —— 该说的身体部位、行为、状态都点明。不要委婉、不要软化、不要换成含糊的替代说法，也不要悄悄删掉。
+- 写成一整段白话，1~3 句，30~80 字。
+
+只输出最终描述。不要解释你改了什么，不要罗列修改点，也不要使用标签、项目符号、编号或字段名。"""
+
+# custom 预设没有 lang，推不出目标语言 —— 那就跟着原稿走（原稿是英文就写英文）。
+# 这比强行指定一种语言更符合直觉：用户拿英文旧稿来润色，当然希望还是英文。
+_REFINE_INSTRUCTION_KEEP_LANG = """下面是这张图片现有的一段描述。它可能是早前由较弱的模型写的，可能不完整、有错，也可能混进了风格词。
+
+请把它改写成最终描述：保留正确且看得见的内容，删掉错误与画面里没有的东西，删掉风格 / 媒介 / 技法 / 画质类词，补上漏掉的细节。
+
+改写时不要顺手「消毒」：原稿若写了裸露或性内容，就继续如实、直接地写出来，不要委婉、不要软化、也不要悄悄删掉。
+
+写成一整段白话，1~3 句。**请使用与下面那段「现有描述」相同的语言来写。**
+
+只输出最终描述，不要解释、不要罗列修改点，也不要使用标签或字段名。"""
+
+# 初稿的引导标签：让模型明确知道下面那段是「待校订的稿子」而不是指令本身。
+_REFINE_LABEL = {"en": "EXISTING CAPTION:", "zh": "现有描述："}
+_REFINE_LABEL_FALLBACK = "现有描述（existing caption）："
 
 # 预设存在外部 JSON 里，方便直接改文本而不用动代码。
 # 路径：<本节点目录>/presets/tagging_system_prompts.json
@@ -2475,17 +2537,23 @@ TAGGER_PRESET_SCENE_ZH = """你正在为「背景 / 环境 / 场景」数据集�
 #       新增 / 重命名 / 删除预设项需要重新加载节点（重启 ComfyUI）才会出现在下拉里。
 _BUILTIN_TAG_PRESETS = {
     "photoreal":    {"label": "写实照片（English）",   "lang": "en", "group": "photoreal",
-                     "format": "raw", "prompt": TAGGER_PRESET_PHOTOREAL},
+                     "format": "raw", "prompt": TAGGER_PRESET_PHOTOREAL,
+                     "refine_prompt": _REFINE_INSTRUCTION},
     "photoreal_zh": {"label": "写实照片（中文）",       "lang": "zh", "group": "photoreal",
-                     "format": "raw", "prompt": TAGGER_PRESET_PHOTOREAL_ZH},
+                     "format": "raw", "prompt": TAGGER_PRESET_PHOTOREAL_ZH,
+                     "refine_prompt": _REFINE_INSTRUCTION_ZH},
     "character":    {"label": "角色/插画（English）",  "lang": "en", "group": "character",
-                     "format": "raw", "prompt": TAGGER_PRESET_CHARACTER},
+                     "format": "raw", "prompt": TAGGER_PRESET_CHARACTER,
+                     "refine_prompt": _REFINE_INSTRUCTION},
     "character_zh": {"label": "角色/插画（中文）",      "lang": "zh", "group": "character",
-                     "format": "raw", "prompt": TAGGER_PRESET_CHARACTER_ZH},
+                     "format": "raw", "prompt": TAGGER_PRESET_CHARACTER_ZH,
+                     "refine_prompt": _REFINE_INSTRUCTION_ZH},
     "scene":        {"label": "场景/环境（English）",  "lang": "en", "group": "scene",
-                     "format": "raw", "prompt": TAGGER_PRESET_SCENE},
+                     "format": "raw", "prompt": TAGGER_PRESET_SCENE,
+                     "refine_prompt": _REFINE_INSTRUCTION},
     "scene_zh":     {"label": "场景/环境（中文）",      "lang": "zh", "group": "scene",
-                     "format": "raw", "prompt": TAGGER_PRESET_SCENE_ZH},
+                     "format": "raw", "prompt": TAGGER_PRESET_SCENE_ZH,
+                     "refine_prompt": _REFINE_INSTRUCTION_ZH},
 }
 
 _PRESET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
@@ -2493,7 +2561,9 @@ _PRESET_JSON = os.path.join(_PRESET_DIR, "tagging_system_prompts.json")
 
 # 预设 JSON 的结构版本。只用来在「内置预设已升级、而磁盘上还是老结构」时
 # 打一条日志提醒，**不自动覆盖** —— 文件一旦生成就归用户所有，里面有手改的内容。
-_PRESET_SCHEMA_VERSION = 2
+#   v2 = 加 lang / group / format（双语配对 + 格式联动）
+#   v3 = 加 refine_prompt（优化已有打标的校订指令，可选字段）
+_PRESET_SCHEMA_VERSION = 3
 
 # 单个预设的字段默认值。lang 决定它在双语模式里算哪一半；
 # group 是「同一主题的中英两份」的配对键；format 决定写盘前要不要机械规整。
@@ -2515,6 +2585,10 @@ _PRESET_JSON_README = [
     '  "group"  - pairs an en preset with its zh counterpart. Defaults to the key.',
     '  "format" - "raw" (write the model output as-is) or "tags_one_line"',
     '             (mechanically flatten to one comma-separated line). Default "raw".',
+    '  "refine_prompt" - OPTIONAL. Used only in refine mode (caption_mode != "off"),',
+    '             where the existing .txt next to the image is sent as a draft.',
+    '             It is the user-side instruction for rewriting that draft.',
+    '             Leave it out to fall back to a built-in instruction chosen by "lang".',
     "A bare string is also accepted: \"mykey\": \"the whole prompt\".",
     "",
     "Bilingual mode pairs presets by group + lang, so photoreal and photoreal_zh",
@@ -2528,7 +2602,7 @@ _PRESET_VERSION_WARNED = {"done": False}
 
 
 def _preset_payload(presets):
-    """把 {key: {label, prompt, lang, group, format}} 组装成写得进 JSON 的完整对象。
+    """把 {key: {label, prompt, lang, group, format, refine_prompt}} 组装成 JSON 对象。
 
     这里就 strip 一次：读回来时 _parse_preset_payload 也会 strip，
     两边统一，避免「首次生成」与「之后读盘」拿到差一个尾部换行的两份文本。
@@ -2541,6 +2615,8 @@ def _preset_payload(presets):
             "group": v.get("group", k),
             "format": v.get("format", _PRESET_FORMAT_DEFAULT),
             "prompt": str(v.get("prompt", "")).strip(),
+            # refine_prompt 是可选字段：留空表示「用内置指令」（按 lang 选）。
+            "refine_prompt": str(v.get("refine_prompt", "")).strip(),
         }
     return {"_readme": _PRESET_JSON_README,
             "_version": _PRESET_SCHEMA_VERSION,
@@ -2579,6 +2655,8 @@ def _parse_preset_payload(data):
             "lang": lang,
             "group": str(v.get("group") or key).strip() or key,
             "format": fmt,
+            # 可选：refine 模式的校订指令。空串 = 用内置的（按 lang 选）。
+            "refine_prompt": str(v.get("refine_prompt") or "").strip(),
         }
     if not out:
         raise ValueError("presets 里没有一条有效预设")
@@ -2602,7 +2680,8 @@ def _check_preset_version(data):
         _PRESET_VERSION_WARNED["done"] = True
         logger.warning(
             f"[Qwen35] 打标预设文件的结构版本是 {ver}，内置版本是 {_PRESET_SCHEMA_VERSION}"
-            f"（老结构缺 lang / group / format 字段，双语模式的配对会失效）。"
+            f"（老结构可能缺 lang / group / format / refine_prompt 字段：双语配对、"
+            f"格式联动、自定义校订指令会退回默认行为）。"
             f"若想换成新版内置预设，删掉这个文件重跑即可自动重新生成：{_PRESET_JSON}"
         )
 
@@ -2687,7 +2766,7 @@ def _tag_runs(key, record, bilingual):
     """决定这一趟跑几次、每次写哪个文件。
 
     返回 (runs, note)：
-      runs = [{"suffix", "lang", "prompt", "format", "label"}, ...]，至少一项
+      runs = [{"suffix", "lang", "prompt", "format", "label", "refine"}, ...]，至少一项
       note = 要写进报告的说明（双语开关没能生效时解释原因），或 None
 
     规则：
@@ -2696,6 +2775,10 @@ def _tag_runs(key, record, bilingual):
         主题由 group 决定 —— 所以选 photoreal 还是 photoreal_zh，结果完全一样。
       · custom 或找不到对照：双语开关无效，退回单份并在报告里说清原因。
         （沉默降级最糟：用户会以为跑了两份，实际只有一份。）
+
+    "refine" 放的是这一趟的校订指令（见 _refine_instruction）：只在
+    caption_mode != "off" 时用到。放在 run 里而不是节点级，是为了让「每种语言
+    各自的校订指令」跟着语言一起配对 —— 中文那一份就该用中文指令。
     """
     fmt = record.get("format")
     single = [{
@@ -2704,6 +2787,7 @@ def _tag_runs(key, record, bilingual):
         "prompt": record["prompt"],
         "format": fmt,
         "label": record.get("label") or key,
+        "refine": _refine_instruction(record),
     }]
     if not bilingual:
         return single, None
@@ -2737,6 +2821,7 @@ def _tag_runs(key, record, bilingual):
             "prompt": v["prompt"],
             "format": v.get("format"),
             "label": v.get("label") or k,
+            "refine": _refine_instruction(v),
         })
     return runs, None
 
@@ -2744,6 +2829,35 @@ def _tag_runs(key, record, bilingual):
 def _lang_word(lang):
     """把预设的 lang 字段翻成报告里用的词。"""
     return {"en": "英文", "zh": "中文"}.get(str(lang or "").strip().lower(), "预设")
+
+
+def _refine_instruction(record):
+    """取这一趟「优化已有打标」用的校订指令。
+
+    预设自带的 refine_prompt 优先（主题不同、校订落点不同，交给用户在 JSON 里写）；
+    没写就按 lang 回落到内置的英文 / 中文指令；custom 没有 lang，
+    回落到「跟原稿同语言」那一份。
+    """
+    own = str((record or {}).get("refine_prompt") or "").strip()
+    if own:
+        return own
+    lang = str((record or {}).get("lang") or "").strip().lower()
+    if lang == "en":
+        return _REFINE_INSTRUCTION
+    if lang == "zh":
+        return _REFINE_INSTRUCTION_ZH
+    return _REFINE_INSTRUCTION_KEEP_LANG
+
+
+def _compose_refine_user_text(instruction, draft, lang):
+    """把校订指令与已有描述拼成 user 侧文本。
+
+    指令在前、初稿在后，中间用一行标签隔开 —— 模型需要明确知道
+    「下面是待校订的稿子」而不是继续读指令。标签按语言选，
+    这样中文预设里出现的也是中文标签，减少语种串味。
+    """
+    label = _REFINE_LABEL.get(str(lang or "").strip().lower(), _REFINE_LABEL_FALLBACK)
+    return (f"{str(instruction or '').strip()}\n\n{label}\n{str(draft or '').strip()}")
 
 
 # 截断时优先退到这些标点之后；退不到再退到分句标点之前。
@@ -2924,6 +3038,175 @@ def _write_text_atomic(path, text, encoding):
                 pass
 
 
+# 读已有 caption 时的编码回退顺序。utf-8-sig 排在最前：它同时能吃下
+# 带 BOM 与不带 BOM 的 utf-8，而纯 utf-8 遇到 BOM 会在正文里留一个 \ufeff。
+_TAG_READ_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "utf-16", "latin-1")
+
+# 读初稿的字符上限。同时是「内容指纹」的规范化上限 —— 两边必须一致，
+# 否则写出去时按全文算、读回来时只有前 4000 字，哈希永远对不上，
+# 于是每次跑都判成「内容变了」，白跑一遍。4000 字远超正常 caption。
+_TAG_DRAFT_LIMIT = 4000
+
+
+def _read_text_tolerant(path, preferred="utf-8", limit=_TAG_DRAFT_LIMIT):
+    """读图片旁边已有的 caption 文本，编码尽量宽容。返回 strip 后的字符串（可能为空）。
+
+    这份 txt 未必是本节点写的 —— 可能是别的打标器、别的编码留下的，
+    所以按「先试用户指定的编码，再逐个回退」的顺序来；最后兜一个
+    errors="replace"，保证坏字节不会让整批直接失败。
+
+    limit 是防止某个 txt 里塞了几万字（比如误把整篇文章当 caption），
+    那样会把上下文挤爆、还白烧 prefill。
+    """
+    order = []
+    # utf-8-sig 恒定排第一：它同时能吃下「带 BOM」与「不带 BOM」的 utf-8，
+    # 而纯 utf-8 读带 BOM 的文件会在正文最前面留一个 \ufeff（进提示词就是脏字符）。
+    # 也正因为它是 utf-8 的超集，排在最前不会误判别的编码。
+    for enc in ("utf-8-sig", preferred, *_TAG_READ_ENCODINGS):
+        e = str(enc or "").strip()
+        if e and e not in order:
+            order.append(e)
+    for enc in order:
+        try:
+            with open(path, "r", encoding=enc) as fh:
+                return fh.read().strip()[: int(limit)]
+        except UnicodeDecodeError:
+            continue                       # 换下一种编码再试
+        except LookupError:
+            continue                       # 这个编码名本机不认，跳过
+        except OSError:
+            return ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip()[: int(limit)]
+    except OSError:
+        return ""
+
+
+def _text_sha1(text):
+    """caption 的内容指纹。
+
+    规范化方式必须与 _read_text_tolerant 的读回格式**逐字一致**
+    （先 strip、再截到 _TAG_DRAFT_LIMIT），否则「读回来」与「写下去」算出的
+    哈希天生不同 —— 每次跑都会误判成「内容变了」，refine 就不幂等了。
+    """
+    canon = str(text or "").strip()[:_TAG_DRAFT_LIMIT]
+    return hashlib.sha1(canon.encode("utf-8")).hexdigest()
+
+
+def _refine_state_path(txt_path):
+    """记录文件放在 txt 旁边：<图名>.txt.q35state。"""
+    return str(txt_path) + ".q35state"
+
+
+def _read_refine_state(txt_path):
+    """读「上次给这张图写了什么」的记录。读不到/坏掉都返回 {}（当作没记录）。"""
+    try:
+        with open(_refine_state_path(txt_path), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_refine_state(txt_path, text, draft, cfg_sig):
+    """写下这一次的输出记录。
+
+    记的是**输出内容**的指纹，不是「处理过了」这个布尔量 —— 判定要按内容来：
+    内容没变就跳过，内容变了（你手动改过）就继续优化。只记布尔量的话，
+    手改之后就再也优化不了了。
+
+    附带记下 draft 指纹与配置指纹：
+      · draft_sha1 只是诊断用，能看出这次是基于哪一版初稿跑出来的；
+      · cfg 是「预设 / 语言 / 格式 / 上限 / 两段提示词」的合成指纹 ——
+        内容没变但你换了预设，也该重做，不能因为「文件没动」就跳过去。
+    写失败只告警：大不了下次多跑一遍，不该因为记录写不进去就判定这次失败。
+    """
+    data = {
+        "v": 1,
+        "out_sha1": _text_sha1(text),
+        "draft_sha1": _text_sha1(draft) if draft else "",
+        "cfg": str(cfg_sig or ""),
+        "chars": len(str(text or "")),
+        "ts": int(time.time()),
+    }
+    try:
+        tmp = _refine_state_path(txt_path) + ".qwen35tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, _refine_state_path(txt_path))
+    except OSError as e:
+        logger.warning(f"[Qwen35] 输出记录写不进去（{e}）；下次会重新优化这一张")
+
+
+def _refine_cfg_sig(preset_key, run, max_chars):
+    """一次生成的「配置指纹」：这几项里任何一项变了都该重做。"""
+    run = run or {}
+    parts = [
+        str(preset_key or ""),
+        str(run.get("lang") or ""),
+        str(run.get("format") or ""),
+        str(int(max_chars or 0)),
+        _text_sha1(run.get("prompt") or ""),
+        _text_sha1(run.get("refine") or ""),
+    ]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _backup_once(path, suffix=".orig"):
+    """把已有 txt 备份成 `<path>.orig`，返回是否真的新写了备份。
+
+    两条硬规矩：
+      · **只在备份不存在时才写** —— 第二次优化同一张图时不能把「已优化过的结果」
+        当成原稿再备份一遍，那样第一版真正的手写初稿就永久丢了。
+      · **按字节复制，不重新编码** —— 原稿是什么编码，备份就是什么编码；
+        解码再编码很可能把原稿悄悄改样。
+    """
+    bak = str(path) + str(suffix)
+    if os.path.exists(bak):
+        return False
+    with open(path, "rb") as src:
+        data = src.read()
+    tmp = bak + ".qwen35tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, bak)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    return True
+
+
+def _write_refined_text(path, text, encoding, draft=None, cfg_sig=""):
+    """优化已有打标时写回：先备份原稿、再原子覆盖、最后记下输出指纹。
+
+    返回是否新写了 `.orig` 备份。备份只在**真有初稿**且**尚未备份过**时写：
+    「这张图在被优化之前长什么样」只留第一次，之后不管重跑多少次都不动它。
+
+    写失败要把**刚建的备份撤掉**：否则原 txt 没被改动，却留下了一个 `.orig`，
+    会让人以为这张已经处理过了。
+    """
+    made = False
+    if draft:
+        made = _backup_once(path)
+    try:
+        _write_text_atomic(path, text, encoding)
+    except BaseException:
+        if made:
+            try:
+                os.remove(str(path) + ".orig")
+            except OSError:
+                pass
+        raise
+    # 输出落盘成功之后才记账：记早了会在写失败时留下假记录。
+    _write_refine_state(path, text, draft, cfg_sig)
+    return made
+
+
 def _open_image_for_tagging(path, max_side=1280):
     """按打标的需要读图：EXIF 转正、统一 RGB、按长边等比缩小。
 
@@ -3011,7 +3294,8 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 #   character / character_zh = 二次元与插画角色（设定 + 服装 + 动作）
                 #   scene     / scene_zh     = 场景环境（地理 + 建筑 + 植被 + 道具）
                 #   custom                   = 用下面那个可编辑的 system_prompt
-                # 六套都是「只写内容、不写风格」的自然语言描述，且不回避 NSFW。
+                # 六套都是「只写内容、不写风格」的自然语言描述，且不回避 NSFW
+                # （敏感内容直接、具体地写，不委婉、不替代）。
                 # 选了内置预设时 system_prompt 与 output_format 都会被预设顶掉
                 # （理由见 _resolve_tag_preset：留着一个忘改的旧 widget 值很难查）。
                 "system_preset": (_tag_preset_choices(), {"default": "custom"}),
@@ -3068,6 +3352,19 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 # 用 max_new_tokens 不好控（中英文的 token/字符比差很多），
                 # 所以另给一个按字符数的硬上限。截断优先退到句末标点，不硬切。
                 "max_output_chars": ("INT", {"default": 0, "min": 0, "max": 4000, "step": 10}),
+                # 优化已有打标：把图片旁边**已存在的 .txt** 当初稿，连同图片一起
+                # 发给模型，让它保留正确内容、删掉风格词、补齐遗漏，产出最终描述。
+                # 典型两个用法：① 批量改写已有 caption；② 自己手改一版后继续优化。
+                #   off           = 从零打标（默认，行为与以前完全一致）
+                #   refine        = 只优化已有 txt 的图；旁边没有 txt 的跳过
+                #   refine_or_new = 有 txt 就优化，没有就从零补写
+                # 是否要动某一张，看**内容变没变**（不是「处理过没有」）：
+                # 每次写回都把输出指纹记进同目录 <图名>.txt.q35state，
+                # 下次比对 —— 内容没变就跳过，你手改过就自动继续优化。
+                # 写回策略：原地覆盖，原稿按字节备份成 <图名>.txt.orig（只留第一次）。
+                # overwrite=overwrite 可无视指纹强制重做。
+                # 同样追加在末尾，避免旧工作流 widgets_values 串位。
+                "caption_mode": (["off", "refine", "refine_or_new"], {"default": "off"}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3174,7 +3471,8 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                    temperature=0.2, seed=42, max_image_side=1280, limit=0,
                    dry_run=False, keep_model_loaded=False, unload_other_models=True,
                    custom_model_path="", show_progress=True, progress_interval=2.0,
-                   bilingual="off", max_output_chars=0, unique_id=None):
+                   bilingual="off", max_output_chars=0, caption_mode="off",
+                   unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
             node_id=unique_id, enabled=show_progress, interval=progress_interval
@@ -3191,6 +3489,9 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         for r in runs:
             if not r.get("format"):
                 r["format"] = str(output_format)
+            # 配置指纹：内容没变但换了预设 / 语言 / 上限，也该重做一次，
+            # 不能因为「文件没动」就跳过（否则换预设等于没换）。
+            r["cfg"] = _refine_cfg_sig(preset_used, r, max_output_chars)
 
         folder = _resolve_folder_path(folder_path)
         exts = sorted(_parse_image_exts(image_exts))
@@ -3203,16 +3504,53 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         # 不该白等二十秒加载一次模型。
         # 双语模式下按**每种语言各自判断**：英文已有、中文还没有时只补中文，
         # 不去覆盖已经写好的英文 —— skip 的语义必须守住。
-        todo = []                           # [(图路径, [(目标 txt, run), ...])]
-        skipped = []                        # 所有语言都已有标签的图
+        #
+        # caption_mode != "off"（优化已有打标）时，判定几乎整个反过来：
+        #   · 从零打标看「有没有 txt」；优化看的是「txt 存不存在 + 有没有 .orig 备份」。
+        #   · 没 txt 的图在 refine 下无事可做 → 跳过；refine_or_new 则退回从零写。
+        #   · .orig 已存在说明这张已经优化过一次，默认跳过（overwrite=overwrite 才重做），
+        #     否则每跑一次都会把上一次的成果再「优化」一遍，越改越走样。
+        mode = str(caption_mode or "off")
+        refine = mode in ("refine", "refine_or_new")
+        force = str(overwrite) == "overwrite"
+
+        todo = []                           # [(图路径, [(目标 txt, run, 初稿或 None), ...])]
+        skipped = []                        # 这一批不处理的图
+        n_draft = n_blank = n_same = 0      # 有初稿要优化 / 无初稿从零写 / 内容未变而跳过（按「次」计）
         for src in files:
             jobs = []
             for r in runs:
                 tgt = _txt_path_for(src, output_suffix + r["suffix"])
-                if (str(overwrite) != "overwrite" and os.path.isfile(tgt)
-                        and os.path.getsize(tgt) > 0):
+                has = os.path.isfile(tgt) and os.path.getsize(tgt) > 0
+                if not refine:
+                    # 从零打标：已经有非空 txt 就跳过（老行为，一字未改）
+                    if has and not force:
+                        continue
+                    jobs.append((tgt, r, None))
                     continue
-                jobs.append((tgt, r))
+                # ---- 优化已有打标 ----
+                if not has:
+                    if mode == "refine_or_new":
+                        jobs.append((tgt, r, None))     # 无初稿 -> 从零补写
+                        n_blank += 1
+                    continue
+                draft = _read_text_tolerant(tgt, output_encoding)
+                if not draft:                           # 文件非空但读出来是空白
+                    if mode == "refine_or_new":
+                        jobs.append((tgt, r, None))
+                        n_blank += 1
+                    continue
+                # 内容没变就不动它：拿上次的输出记录比指纹。
+                # 这样「我手动改过这一张」会自动被认出来并继续优化，
+                # 而没动过的图不会每次都被重写一遍。
+                if not force:
+                    st = _read_refine_state(tgt)
+                    if (st.get("out_sha1") == _text_sha1(draft)
+                            and st.get("cfg") == r.get("cfg")):
+                        n_same += 1
+                        continue
+                jobs.append((tgt, r, draft))
+                n_draft += 1
             if jobs:
                 todo.append((src, jobs))
             else:
@@ -3223,10 +3561,16 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"{_lang_word(r.get('lang'))} → 同名 .txt{('（后缀 ' + r['suffix'] + '）') if r['suffix'] else ''}"
             for r in runs
         )
+        mode_desc = {
+            "off": "从零打标",
+            "refine": "优化已有打标（旁边没有 txt 的图跳过）",
+            "refine_or_new": "优化已有打标 + 无初稿的从零补写",
+        }.get(mode, f"优化已有打标（{mode}）")
 
         head = [
             "[Qwen35] ========== 批量打标 ==========",
             f"  文件夹      : {folder}",
+            f"  打标模式    : {mode_desc}",
             f"  系统提示词  : {preset_used}"
             + (f"（预设：{preset_label}）" if preset_used != "custom"
                else "（custom，取节点上填写的文本）"),
@@ -3236,10 +3580,26 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"  扫描到      : {scanned} 张（扩展名 {'/'.join(exts)}，"
             f"{'含子目录' if recursive else '仅当前目录'}）",
             f"  待处理      : {len(todo)} 张 / {n_jobs} 次生成"
-            f"（整张已有标签跳过 {len(skipped)} 张，overwrite={overwrite}）",
-            f"  输出        : 与图片同目录同名 .txt"
-            f"（后缀 '{output_suffix}'，编码 {output_encoding}）",
+            f"（整张无需处理跳过 {len(skipped)} 张，overwrite={overwrite}）",
         ]
+        if refine:
+            head.append(
+                f"  初稿        : 待优化 {n_draft} 次"
+                + (f"，无初稿从零写 {n_blank} 次" if n_blank else "")
+                + (f"，内容未变跳过 {n_same} 次" if n_same else "")
+            )
+            head.append(
+                f"  变更判定    : 拿上次输出的指纹比对，内容没变就不动它；"
+                f"你手动改过的会自动继续优化（想强制重做设 overwrite=overwrite）"
+            )
+            head.append(
+                f"  写回        : 原地覆盖 .txt；原稿按字节备份成 <图名>.txt.orig"
+                f"（只留第一次那份），输出指纹记在同目录 <图名>.txt.q35state"
+            )
+        head.append(
+            f"  输出        : 与图片同目录同名 .txt"
+            f"（后缀 '{output_suffix}'，编码 {output_encoding}）"
+        )
         if bl_note:
             head.append(f"  ⓘ {bl_note}")
         if int(limit) > 0:
@@ -3248,11 +3608,14 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         if dry_run:
             head.append("  ⓘ dry_run=true：只列清单，不加载模型、不写任何文件")
             for src, jobs in todo[:20]:
-                for tgt, r in jobs:
+                for tgt, r, draft in jobs:
+                    mark = ""
+                    if refine:
+                        mark = "  ✎ 校订已有初稿" if draft else "  + 从零补写"
                     head.append(
                         f"     {os.path.relpath(src, folder)}"
                         f"  ->  {os.path.relpath(tgt, folder)}"
-                        f"   [{_lang_word(r.get('lang'))}]"
+                        f"   [{_lang_word(r.get('lang'))}]{mark}"
                     )
             if len(todo) > 20:
                 head.append(f"     … 另有 {len(todo) - 20} 张")
@@ -3303,11 +3666,14 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"开始打标：{len(todo)} 张 / {n_jobs} 次生成，温度 {float(temperature):.2f}"
             + ("（贪心解码，同一批两次跑结果一致）" if float(temperature) <= 0 else "")
             + (f"；输出上限 {int(max_output_chars)} 字符" if int(max_output_chars) > 0 else "")
+            + (f"；优化已有打标：{n_draft} 次带初稿"
+               + (f"、{n_blank} 次从零补写" if n_blank else "") if refine else "")
         )
 
         ok = n_fail = 0                     # 按「次」计：单语时等于张数，双语时是两倍
         tok_sum = tag_sum = 0
         n_cut = 0                           # 被字符上限截断的条数
+        n_bak = 0                           # 新写出的 .orig 备份数
         t_tag_total = 0.0
         first_prefill = None
         failures, examples = [], []
@@ -3316,13 +3682,22 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             name = os.path.relpath(src, folder)
             t_img = time.perf_counter()
             img_fail = 0
-            for tgt, r in jobs:
+            for tgt, r, draft in jobs:
                 # 双语时把语言写进日志，否则分不清哪一份是哪个语种
                 label = f"{name} [{_lang_word(r.get('lang'))}]" if multi else name
+                if refine:
+                    label += "（校订原有）" if draft else "（从零补写）"
+                # 优化已有打标：把初稿连同校订指令一起塞进 user 侧文本。
+                # 系统提示词不动 —— 全局口径（只写内容不写风格、用哪国语言）仍由它负责。
+                u_prompt = user_prompt
+                if draft:
+                    u_prompt = _compose_refine_user_text(
+                        r.get("refine") or "", draft, r.get("lang")
+                    )
                 t_one = time.perf_counter()
                 try:
                     text, n_tok, t_pre, t_dec, cut = self._tag_one_image(
-                        model, processor, src, r["prompt"], user_prompt,
+                        model, processor, src, r["prompt"], u_prompt,
                         int(max_image_side), int(max_new_tokens), float(temperature),
                         bool(enable_thinking), int(seed) + idx, r["format"],
                         int(max_output_chars),
@@ -3331,7 +3706,14 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                         raise RuntimeError(
                             "输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
                         )
-                    _write_text_atomic(tgt, text, output_encoding)
+                    if refine:
+                        # 优化已有打标：先备份原稿（只留第一次那份），再原子覆盖，
+                        # 最后把输出指纹记进 .q35state —— 下次靠它判断「内容有没有变」。
+                        if _write_refined_text(tgt, text, output_encoding,
+                                               draft=draft, cfg_sig=r.get("cfg")):
+                            n_bak += 1
+                    else:
+                        _write_text_atomic(tgt, text, output_encoding)
                 except BaseException as e:
                     # 取消必须立刻中止整批；其余异常只算这一次失败，同张的另一种语言照跑。
                     if _is_comfy_interrupt(e) or isinstance(e, (KeyboardInterrupt, SystemExit)):
@@ -3405,6 +3787,16 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             lines.append(
                 f"  按上限截断  : {n_cut} 条"
                 f"（max_output_chars={int(max_output_chars)}）"
+            )
+        if n_bak:
+            lines.append(
+                f"  原稿备份    : {n_bak} 个 <图名>.txt.orig"
+                f"（字节级备份，只留第一次那份，可随时还原）"
+            )
+        if refine:
+            lines.append(
+                f"  输出记录    : {ok} 个 <图名>.txt.q35state"
+                f"（记的是输出指纹；删掉只会让这张下次重跑一遍，无副作用）"
             )
         lines.append(
             f"  打标耗时    : {t_tag_total:6.2f}s"

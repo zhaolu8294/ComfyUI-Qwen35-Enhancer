@@ -303,14 +303,14 @@ order = list(it["required"]) + list(it["optional"])
 print("  widgets 顺序:")
 for _i, _k in enumerate(order):
     print(f"    [{_i:>2}] {_k}")
-check("widgets 总数 = 27", len(order) == 27, str(len(order)))
+check("widgets 总数 = 28", len(order) == 28, str(len(order)))
 
 sig = [p for p in inspect.signature(NODE.tag_folder).parameters.keys()
        if p not in ("self", "unique_id")]
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
-check("两个新控件**追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
-      order[-2:] == ["bilingual", "max_output_chars"], str(order[-2:]))
+check("三个新增控件**追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
+      order[-3:] == ["bilingual", "max_output_chars", "caption_mode"], str(order[-3:]))
 
 check("folder_path 不是多行框（路径不该用多行输入）",
       it["required"]["folder_path"][1].get("multiline") is False)
@@ -333,6 +333,12 @@ check("bilingual 默认 off（默认不加倍耗时）",
 check("max_output_chars 默认 0 = 不限（行为与以前一致）",
       it["optional"]["max_output_chars"][1]["default"] == 0,
       str(it["optional"]["max_output_chars"][1]["default"]))
+check("caption_mode 三档齐全（off / refine / refine_or_new）",
+      list(it["optional"]["caption_mode"][0]) == ["off", "refine", "refine_or_new"],
+      str(list(it["optional"]["caption_mode"][0])))
+check("caption_mode 默认 off（默认不改写任何已有 txt）",
+      it["optional"]["caption_mode"][1]["default"] == "off",
+      str(it["optional"]["caption_mode"][1]["default"]))
 check("system_prompt 是多行框", it["required"]["system_prompt"][1]["multiline"] is True)
 check("system_prompt 默认是打标提示词而不是 H3 那套",
       "danbooru" in it["required"]["system_prompt"][1]["default"]
@@ -816,6 +822,14 @@ for _n, _p in _presets.items():
           else ("Do NOT write a comma-separated tag list" in _t))
     check(f"{_n} 写明 NSFW 不回避、如实描述",
           ("NSFW 属于正常范围" in _t) if _zh else ("NSFW IS IN SCOPE" in _t))
+    check(f"{_n} 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）",
+          ("要**直接、具体**地写" in _t and "不要委婉" in _t and "不要换成含糊" in _t)
+          if _zh else
+          ("BE DIRECT AND SPECIFIC" in _t and "Do not euphemise" in _t
+           and "talk around it" in _t))
+    check(f"{_n} 带 refine_prompt（优化已有打标的校订指令）",
+          len(str(_p.get("refine_prompt") or "")) > 200,
+          str(len(str(_p.get("refine_prompt") or ""))))
     check(f"{_n} 保留「只写看得见的、不编造」硬规则",
           ("不要编造" in _t) if _zh else ("Never invent" in _t))
     check(f"{_n} 指定了输出语言",
@@ -1118,6 +1132,312 @@ finally:
 check("custom + dry_run：报告里说明双语开关为何无效",
       "custom" in Harness().run(D15, system_preset="custom", system_prompt="SYS",
                                 bilingual="en_then_zh", dry_run=True)["result"][0])
+
+# ===========================================================================
+section("J) 优化已有打标（caption_mode = refine / refine_or_new）")
+# ===========================================================================
+# ---- 小工具 ----
+def user_texts(h):
+    """取出所有 user 侧**文本**块（图片块跳过）—— 用来断言初稿真的发出去了。"""
+    out = []
+    for _msgs in h.proc.messages_seen:
+        for _m in _msgs:
+            if isinstance(_m, dict) and _m.get("role") == "user":
+                for _c in (_m.get("content") or []):
+                    if isinstance(_c, dict) and _c.get("type") == "text":
+                        out.append(_c.get("text") or "")
+    return out
+
+
+def jdir(name, n=1):
+    _d = os.path.join(TMP_ROOT, name)
+    return _d, make_set(_d, n)
+
+
+# ---- J1 读初稿：编码宽容 / 空白 / 缺失 / 超长 ----
+_rd = QM._read_text_tolerant
+_p1 = os.path.join(TMP_ROOT, "enc_utf8.txt")
+open(_p1, "w", encoding="utf-8").write("  一段 utf-8 中文  \n")
+check("读初稿：utf-8 正常读出并 strip", _rd(_p1) == "一段 utf-8 中文", repr(_rd(_p1)))
+_p2 = os.path.join(TMP_ROOT, "enc_gbk.txt")
+open(_p2, "w", encoding="gbk").write("GBK 写的旧稿")
+check("读初稿：gbk 旧稿也能读（编码自动回退）", _rd(_p2, "utf-8") == "GBK 写的旧稿", repr(_rd(_p2)))
+_p3 = os.path.join(TMP_ROOT, "enc_bom.txt")
+open(_p3, "w", encoding="utf-8-sig").write("带 BOM 的稿子")
+check("读初稿：带 BOM 的 utf-8 不残留 \\ufeff", _rd(_p3) == "带 BOM 的稿子", repr(_rd(_p3)))
+check("读初稿：文件不存在 -> 空串", _rd(os.path.join(TMP_ROOT, "nope.txt")) == "")
+_p4 = os.path.join(TMP_ROOT, "enc_blank.txt")
+open(_p4, "w", encoding="utf-8").write("  \n\n ")
+check("读初稿：只有空白 -> 空串（当作没有初稿）", _rd(_p4) == "")
+_p5 = os.path.join(TMP_ROOT, "enc_long.txt")
+open(_p5, "w", encoding="utf-8").write("x" * 9000)
+check("读初稿：超长按 _TAG_DRAFT_LIMIT 截断（不把上下文挤爆）",
+      len(_rd(_p5)) == QM._TAG_DRAFT_LIMIT, str(len(_rd(_p5))))
+
+# ---- J2 内容指纹：必须与「读回来」算得一模一样，否则幂等就是假的 ----
+check("内容指纹：首尾空白被规范化（与读回的 strip 对齐）",
+      QM._text_sha1("abc") == QM._text_sha1("  abc\n"))
+check("内容指纹：内容不同 -> 指纹不同",
+      QM._text_sha1("abc") != QM._text_sha1("abd"))
+_p_sha = os.path.join(TMP_ROOT, "sha_rt.txt")
+open(_p_sha, "w", encoding="utf-8").write("  某段描述  \n")
+check("内容指纹：写出去与读回来算出来一致（refine 幂等的前提）",
+      QM._text_sha1("某段描述") == QM._text_sha1(_rd(_p_sha)))
+
+# ---- J3 校订指令：预设自带的优先，缺省按语言回落 ----
+check("校订指令：预设自带的 refine_prompt 优先（不回落常量）",
+      QM._refine_instruction(_presets["photoreal"]) == _presets["photoreal"]["refine_prompt"])
+check("校订指令：英文预设缺 refine_prompt 时回落英文常量",
+      "FINAL caption" in QM._refine_instruction({"lang": "en"}))
+check("校订指令：中文预设缺 refine_prompt 时回落中文常量",
+      "请把它改写成最终描述" in QM._refine_instruction({"lang": "zh"}))
+check("校订指令：custom（无 lang）回落「与原稿同语言」那份",
+      "相同的语言" in QM._refine_instruction({"lang": ""}))
+check("校订指令：三份都要求「只输出最终描述、不要解释改了什么」",
+      ("Do not explain what you changed" in QM._REFINE_INSTRUCTION)
+      and ("不要解释你改了什么" in QM._REFINE_INSTRUCTION_ZH)
+      and ("不要解释" in QM._REFINE_INSTRUCTION_KEEP_LANG))
+check("校订指令：三份都写了「不要顺手消毒」（改写时不许把 NSFW 洗掉）",
+      ("NEVER SANITISE" in QM._REFINE_INSTRUCTION)
+      and ("消毒" in QM._REFINE_INSTRUCTION_ZH)
+      and ("消毒" in QM._REFINE_INSTRUCTION_KEEP_LANG))
+
+# ---- J4 拼装：指令在前、初稿在后，标签按语言选 ----
+_ct = QM._compose_refine_user_text("INSTRUCTION", "OLD CAPTION", "en")
+check("拼装：指令在前、初稿在后", _ct.index("INSTRUCTION") < _ct.index("OLD CAPTION"))
+check("拼装：英文 run 用英文标签", "EXISTING CAPTION:" in _ct)
+check("拼装：中文 run 用中文标签",
+      "现有描述：" in QM._compose_refine_user_text("指令", "旧稿", "zh"))
+check("拼装：custom（lang 空）用兜底标签",
+      "existing caption" in QM._compose_refine_user_text("指令", "旧稿", ""))
+check("拼装：初稿为空也返回字符串、不抛异常",
+      isinstance(QM._compose_refine_user_text("I", "", ""), str))
+
+# ---- J5 _tag_runs 把校订指令一起带出来 ----
+check("_tag_runs：单语 run 也带校订指令",
+      bool(QM._tag_runs("photoreal", _presets["photoreal"], False)[0][0].get("refine")))
+_rr_bl = QM._tag_runs("photoreal", _presets["photoreal"], True)[0]
+check("_tag_runs：双语时两份各带自己语言的校订指令",
+      "FINAL caption" in _rr_bl[0]["refine"] and "请把它改写成最终描述" in _rr_bl[1]["refine"])
+
+# ---- J6 配置指纹 ----
+_r_cfg = QM._tag_runs("photoreal", _presets["photoreal"], False)[0][0]
+check("配置指纹：同一份配置两次算出来一样",
+      QM._refine_cfg_sig("photoreal", _r_cfg, 0) == QM._refine_cfg_sig("photoreal", _r_cfg, 0))
+check("配置指纹：换预设 -> 变",
+      QM._refine_cfg_sig("photoreal", _r_cfg, 0) != QM._refine_cfg_sig("scene", _r_cfg, 0))
+check("配置指纹：改字符上限 -> 变",
+      QM._refine_cfg_sig("photoreal", _r_cfg, 0) != QM._refine_cfg_sig("photoreal", _r_cfg, 120))
+check("配置指纹：换系统提示词 -> 变",
+      QM._refine_cfg_sig("photoreal", dict(_r_cfg, prompt="X"), 0)
+      != QM._refine_cfg_sig("photoreal", _r_cfg, 0))
+
+# ---- J7 端到端：首次优化（读初稿 / 写回 / 备份 / 记账） ----
+D30, paths30 = jdir("j30", 1)
+_t30 = QM._txt_path_for(paths30[0])
+_OLD30 = "旧稿：一个女孩，动漫风格，masterpiece"
+open(_t30, "w", encoding="utf-8").write(_OLD30)
+h30 = Harness(raw_reply="一位年轻女性站在窗边，穿着浅色衬衫。")
+try:
+    r30 = h30.run(D30, system_preset="photoreal", caption_mode="refine")
+    rep30 = r30["result"][0]
+    check("refine：处理了 1 张", r30["result"][1] == 1, str(r30["result"][1]))
+    check("refine：初稿被塞进 user 文本", any(_OLD30 in t for t in user_texts(h30)),
+          str(user_texts(h30))[:100])
+    check("refine：校订指令和初稿在同一段 user 文本里",
+          any("FINAL caption" in t and _OLD30 in t for t in user_texts(h30)))
+    check("refine：系统提示词仍是预设那份（没被校订指令顶掉）",
+          h30.proc.messages_seen[0][0]["content"] == _presets["photoreal"]["prompt"])
+    check("refine：结果写回同一个 txt",
+          open(_t30, encoding="utf-8").read() == "一位年轻女性站在窗边，穿着浅色衬衫。")
+    check("refine：原稿按字节备份成 .orig",
+          open(_t30 + ".orig", encoding="utf-8").read() == _OLD30)
+    check("refine：写下输出指纹记录 .q35state",
+          os.path.isfile(_t30 + ".q35state")
+          and bool(QM._read_refine_state(_t30).get("out_sha1")))
+    check("refine：报告写明模式与变更判定",
+          "优化已有打标" in rep30 and "变更判定" in rep30)
+finally:
+    h30.close()
+
+# ---- J8 内容没变 -> 不覆盖、不优化（这是本轮的核心诉求） ----
+h31 = Harness(raw_reply="这份回复不该被用到")
+try:
+    r31 = h31.run(D30, system_preset="photoreal", caption_mode="refine")
+    check("内容未变：直接跳过，不加载模型、不覆盖",
+          r31["result"][1] == 0 and h31.loads == 0, str(r31["result"][1]))
+    check("内容未变：报告写明「内容未变跳过」", "内容未变跳过" in r31["result"][0])
+    check("内容未变：txt 保持上次的输出",
+          open(_t30, encoding="utf-8").read() == "一位年轻女性站在窗边，穿着浅色衬衫。")
+finally:
+    h31.close()
+
+# ---- J9 手动改过 -> 自动继续优化 ----
+_MANUAL = "我手动改的版本：只有一个人"
+open(_t30, "w", encoding="utf-8").write(_MANUAL)
+h32 = Harness(raw_reply="手改之后再优化出来的最终描述。")
+try:
+    r32 = h32.run(D30, system_preset="photoreal", caption_mode="refine")
+    check("手改后继续优化：被认出来并重跑", r32["result"][1] == 1, str(r32["result"][1]))
+    check("手改后继续优化：初稿用的就是我手改的那一版",
+          any(_MANUAL in t for t in user_texts(h32)))
+    check("手改后继续优化：输出已更新",
+          open(_t30, encoding="utf-8").read() == "手改之后再优化出来的最终描述。")
+    check("手改后继续优化：.orig 仍是最初那一稿（不被手改版覆盖）",
+          open(_t30 + ".orig", encoding="utf-8").read() == _OLD30)
+    check("手改后继续优化：指纹记录跟着更新",
+          QM._read_refine_state(_t30)["out_sha1"]
+          == QM._text_sha1("手改之后再优化出来的最终描述。"))
+finally:
+    h32.close()
+
+# ---- J10 内容没变但换了预设 -> 该重做（否则换预设等于没换） ----
+h33 = Harness(raw_reply="换了预设之后重跑的结果。")
+try:
+    r33 = h33.run(D30, system_preset="scene", caption_mode="refine")
+    check("换了预设：内容没变也重做（配置指纹变了）",
+          r33["result"][1] == 1, str(r33["result"][1]))
+finally:
+    h33.close()
+h33b = Harness()
+try:
+    r33b = h33b.run(D30, system_preset="scene", caption_mode="refine")
+    check("同预设再跑一次：又跳过了（说明上一步真的记了新指纹）",
+          r33b["result"][1] == 0, str(r33b["result"][1]))
+finally:
+    h33b.close()
+
+# ---- J11 overwrite=overwrite 可无视指纹强制重做 ----
+h33c = Harness(raw_reply="强制重做的结果。")
+try:
+    r33c = h33c.run(D30, system_preset="scene", caption_mode="refine", overwrite="overwrite")
+    check("overwrite=overwrite：内容没变也强制重做", r33c["result"][1] == 1,
+          str(r33c["result"][1]))
+    check("强制重做也不会覆盖 .orig（最初那一稿永远留着）",
+          open(_t30 + ".orig", encoding="utf-8").read() == _OLD30)
+finally:
+    h33c.close()
+
+# ---- J12 无初稿：refine 跳过 / refine_or_new 从零补写 ----
+D31, paths31 = jdir("j31", 3)
+_t31 = [QM._txt_path_for(p) for p in paths31]
+open(_t31[0], "w", encoding="utf-8").write("第一张的旧稿")
+h34 = Harness(raw_reply="REFINED")
+try:
+    r34 = h34.run(D31, system_preset="photoreal", caption_mode="refine")
+    check("caption_mode=refine：没有旧 txt 的图一律跳过（只处理 1 张）",
+          r34["result"][1] == 1, str(r34["result"][1]))
+    check("caption_mode=refine：没旧稿的不会被写出 txt",
+          not os.path.exists(_t31[1]) and not os.path.exists(_t31[2]))
+    check("caption_mode=refine：没旧稿的也不会留下 .orig",
+          not os.path.exists(_t31[1] + ".orig"))
+finally:
+    h34.close()
+
+h35 = Harness(raw_reply="FILLED")
+try:
+    r35 = h35.run(D31, system_preset="photoreal", caption_mode="refine_or_new")
+    check("caption_mode=refine_or_new：无初稿的从零补写（2 张）",
+          r35["result"][1] == 2, str(r35["result"][1]))
+    check("refine_or_new：补写的两张写出了 txt",
+          os.path.exists(_t31[1]) and os.path.exists(_t31[2]))
+    check("refine_or_new：从零补写的不留 .orig（本来就没有原稿可备份）",
+          not os.path.exists(_t31[1] + ".orig"))
+    check("refine_or_new：补写的也记了指纹（下次不会重做）",
+          bool(QM._read_refine_state(_t31[1]).get("out_sha1")))
+    check("refine_or_new：报告区分「待优化」与「无初稿从零写」",
+          "无初稿从零写" in r35["result"][0])
+finally:
+    h35.close()
+
+h36 = Harness(raw_reply="不该被用到")
+try:
+    r36 = h36.run(D31, system_preset="photoreal", caption_mode="refine_or_new")
+    check("refine_or_new 幂等：第二次一张都不动（含刚才从零补写的）",
+          r36["result"][1] == 0, str(r36["result"][1]))
+finally:
+    h36.close()
+
+# ---- J13 写盘失败：不许留下误导性痕迹 ----
+D32, paths32 = jdir("j32", 1)
+_t32 = QM._txt_path_for(paths32[0])
+open(_t32, "w", encoding="utf-8").write("原始稿")
+h37 = Harness(raw_reply="新稿")
+_save_wta = QM._write_text_atomic
+
+
+def _boom(*a, **k):
+    raise OSError("磁盘写满（模拟）")
+
+
+QM._write_text_atomic = _boom
+try:
+    r37 = h37.run(D32, system_preset="photoreal", caption_mode="refine")
+    check("写盘失败：原 txt 未被改动", open(_t32, encoding="utf-8").read() == "原始稿")
+    check("写盘失败：刚建的 .orig 被撤回（不留误导性痕迹）",
+          not os.path.exists(_t32 + ".orig"))
+    check("写盘失败：不留下输出记录（否则下次会被当成「没变」跳过）",
+          not os.path.exists(_t32 + ".q35state"))
+    check("写盘失败：算这一张失败并写进报告", "成功 / 失败 : 0 / 1" in r37["result"][0])
+finally:
+    QM._write_text_atomic = _save_wta
+    h37.close()
+
+# ---- J14 dry_run 清单要标出「校订」与「补写」 ----
+D33, paths33 = jdir("j33", 2)
+open(QM._txt_path_for(paths33[0]), "w", encoding="utf-8").write("有稿")
+h38 = Harness()
+try:
+    r38 = h38.run(D33, system_preset="photoreal", caption_mode="refine_or_new", dry_run=True)
+    rep38 = r38["result"][0]
+    check("dry_run(refine)：清单标出「校订已有初稿」与「从零补写」",
+          "校订已有初稿" in rep38 and "从零补写" in rep38)
+    check("dry_run(refine)：不加载模型、不写文件",
+          h38.loads == 0 and not os.path.exists(QM._txt_path_for(paths33[1])))
+    check("dry_run(refine)：报告写明模式", "打标模式" in rep38 and "优化已有打标" in rep38)
+finally:
+    h38.close()
+
+# ---- J15 双语 refine：中英各读各的初稿 ----
+D34, paths34 = jdir("j34", 1)
+_t34en = QM._txt_path_for(paths34[0])
+_t34zh = QM._txt_path_for(paths34[0], "_zh")
+open(_t34en, "w", encoding="utf-8").write("EN OLD CAPTION")
+open(_t34zh, "w", encoding="utf-8").write("中文旧稿")
+h39 = Harness(raw_reply="REPLY")
+try:
+    r39 = h39.run(D34, system_preset="photoreal", bilingual="en_then_zh",
+                  caption_mode="refine")
+    ut39 = user_texts(h39)
+    check("双语 refine：英文那份读的是 .txt",
+          any("EN OLD CAPTION" in t and "EXISTING CAPTION" in t for t in ut39),
+          str(ut39)[:120])
+    check("双语 refine：中文那份读的是 _zh.txt（各读各的）",
+          any("中文旧稿" in t and "现有描述：" in t for t in ut39), str(ut39)[:120])
+    check("双语 refine：两个文件都写回", r39["result"][1] == 2, str(r39["result"][1]))
+    check("双语 refine：两个 .orig 都建了",
+          os.path.exists(_t34en + ".orig") and os.path.exists(_t34zh + ".orig"))
+    check("双语 refine：两份各自记了指纹",
+          os.path.exists(_t34en + ".q35state") and os.path.exists(_t34zh + ".q35state"))
+finally:
+    h39.close()
+
+# ---- J16 回归：caption_mode=off 时老行为一字不变 ----
+D35, paths35 = jdir("j35", 1)
+_t35 = QM._txt_path_for(paths35[0])
+open(_t35, "w", encoding="utf-8").write("已有标签")
+h40 = Harness()
+try:
+    r40 = h40.run(D35, system_preset="photoreal")          # caption_mode 默认 off
+    check("caption_mode=off（默认）：有 txt 的图照旧跳过",
+          r40["result"][1] == 0 and h40.loads == 0, str(r40["result"][1]))
+    check("caption_mode=off：不建 .orig / .q35state",
+          not os.path.exists(_t35 + ".orig")
+          and not os.path.exists(_t35 + ".q35state"))
+    check("caption_mode=off：报告也写明「从零打标」",
+          "从零打标" in r40["result"][0])
+finally:
+    h40.close()
 
 # ---- 收尾 ----
 print()
