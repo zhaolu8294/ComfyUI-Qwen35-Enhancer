@@ -299,14 +299,40 @@ check("两次扫描结果完全一致（顺序可复现）",
 section("E) 节点接线：widgets / 签名 / 注册 / 共享缓存")
 # ===========================================================================
 it = NODE.INPUT_TYPES()
-order = list(it["required"]) + list(it["optional"])
+_all = {**it["required"], **it["optional"]}
+# ComfyUI 判定「控件 vs 连线输入」的规则：类型元组只有 1 个元素 => 连线输入；
+# 首元素是 list 或基础类型名（INT/FLOAT/STRING/BOOLEAN）=> 控件。
+# 连线输入**不占 widgets_values 的位置**，所以新增它不会让旧工作流串位 ——
+# 这条规则必须在测试里钉住，否则哪天有人把输入误写成控件就悄悄破坏了兼容性。
+def _is_line_input(spec):
+    """ComfyUI 的判定规则：类型元组只有 1 个元素、且首元素**既不是 list**（那是 COMBO
+    控件，例如 model_name 的 `(_model_choices(),)`）**也不是基础类型名**
+    （INT/FLOAT/STRING/BOOLEAN）的，才是连线输入。
+    典型：("IMAGE",) / ("QWEN35_BACKEND",) 是输入；([...],) 与 (..., {opts}) 是控件。
+    """
+    if not (isinstance(spec, tuple) and len(spec) == 1):
+        return False
+    t = spec[0]
+    if isinstance(t, (list, tuple)):
+        return False
+    return t not in ("INT", "FLOAT", "STRING", "BOOLEAN")
+
+
+_line_inputs = [k for k, v in _all.items() if _is_line_input(v)]
+order = [k for k in _all if k not in _line_inputs]
 print("  widgets 顺序:")
 for _i, _k in enumerate(order):
     print(f"    [{_i:>2}] {_k}")
-check("widgets 总数 = 28", len(order) == 28, str(len(order)))
+print(f"  连线输入（不占 widget 位）: {_line_inputs}")
+check("widgets 总数 = 28（backend 是连线输入，不计数）", len(order) == 28, str(len(order)))
+check("连线输入只有 backend", _line_inputs == ["backend"], str(_line_inputs))
+check("backend 是可选输入，类型 QWEN35_BACKEND",
+      it["optional"].get("backend") == ("QWEN35_BACKEND",),
+      str(it["optional"].get("backend")))
+check("backend 不是必填（不连线时必须能照常跑原路径）", "backend" not in it["required"])
 
 sig = [p for p in inspect.signature(NODE.tag_folder).parameters.keys()
-       if p not in ("self", "unique_id")]
+       if p not in ("self", "unique_id") and p not in _line_inputs]
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
 check("三个新增控件**追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
@@ -1438,6 +1464,340 @@ try:
           "从零打标" in r40["result"][0])
 finally:
     h40.close()
+
+# ================================================================
+# K  GGUF 后端（gguf_backend.py）—— 全程假 server，不加载真模型、不碰显卡
+# ================================================================
+# 真机那条路（27B Q4 是否真进显存、tok/s 多少）由 smoke_gguf_backend.py 负责；
+# 这里只钉死「参数拼装 / 签名复用 / health 轮询 / payload 形态 / 报错文本」这些
+# 纯逻辑 —— 它们不依赖模型，用假 API 就能全部覆盖，也因此能塞进回归测试里。
+section("K  GGUF 后端（llama.cpp / llama-server）")
+
+import base64 as _b64              # noqa: E402
+import http.server as _httpsrv     # noqa: E402
+import threading as _thr           # noqa: E402
+
+import gguf_backend as GBm         # noqa: E402
+
+
+class _FakeAPI(_httpsrv.BaseHTTPRequestHandler):
+    """假的 llama-server：只实现 /health 和 /v1/chat/completions。"""
+
+    payloads = []
+    health_code = 200
+    health_body = {"status": "ok"}
+
+    def log_message(self, *a):
+        pass
+
+    def _out(self, obj, code=200):
+        b = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._out(_FakeAPI.health_body, _FakeAPI.health_code)
+        else:
+            self._out({"error": "not found"}, 404)
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n)
+        try:
+            _FakeAPI.payloads.append(json.loads(raw.decode("utf-8")))
+        except Exception:
+            _FakeAPI.payloads.append({})
+        self._out({
+            "choices": [{"message": {"content": "TAGGED-OUT",
+                                     "reasoning_content": "hidden-thought"}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+            "timings": {"prompt_ms": 300.0, "predicted_ms": 200.0},
+        })
+
+
+_fake_srv = _httpsrv.ThreadingHTTPServer(("127.0.0.1", 0), _FakeAPI)
+_thr.Thread(target=_fake_srv.serve_forever, daemon=True).start()
+FAKE_PORT = _fake_srv.server_address[1]
+
+
+class _FakeProc:
+    def __init__(self, alive=True):
+        self.alive = alive
+        self.stdout = None
+
+    def poll(self):
+        return None if self.alive else 1
+
+    def terminate(self):
+        self.alive = False
+
+    def kill(self):
+        self.alive = False
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def kserver(alive=True):
+    """一个指向假 API 的 GgufServer；_start 换掉，不真拉进程。"""
+    g = GBm.GgufServer({"server_exe": "x.exe", "model": "y.gguf"})
+    g.port = FAKE_PORT
+    g.proc = _FakeProc(alive)
+    g._start = lambda: None
+    return g
+
+
+# ---- K1 build_args：命令行拼装 ----
+KCFG = {
+    "server_exe": r"C:\x\llama-server.exe", "model": r"C:\x\a.gguf",
+    "mmproj": r"C:\x\mm.gguf", "parallel": 1, "n_gpu_layers": -1,
+    "context_size": 8192, "kv_cache_type": "q8_0", "flash_attn": True,
+    "batch": 2048, "ubatch": 512, "reasoning_format": "deepseek",
+    "extra_args": "",
+}
+
+
+def kargs(**over):
+    return GBm.GgufServer({**KCFG, **over}).build_args()
+
+
+_a_bare = GBm.GgufServer({"server_exe": r"C:\x\llama-server.exe",
+                          "model": "m.gguf"}).build_args()
+check("K1a 最小配置也能拼出可用的命令行",
+      _a_bare[0].endswith("llama-server.exe") and "-m" in _a_bare
+      and "--host" in _a_bare and "--port" in _a_bare,
+      " ".join(_a_bare[:6]))
+check("K1b n_gpu_layers=-1 时不传 -ngl（层放置交给 llama.cpp 自动 fit）",
+      "-ngl" not in _a_bare)
+_a = kargs()
+check("K1c 带 mmproj 时传 --mmproj", "--mmproj" in _a)
+check("K1d 只有显式给了 n_gpu_layers>=0 才传 -ngl",
+      "-ngl" not in _a and "-ngl" in kargs(n_gpu_layers=30))
+check("K1e --flash-attn 用 on/off 取值（新版 llama.cpp 不认裸开关）",
+      _a[_a.index("--flash-attn") + 1] == "on")
+check("K1f --jinja 必开（否则 GGUF 里的 Qwen 模板与图片占位符都对不上）",
+      "--jinja" in _a)
+check("K1g parallel 钉死 1（48 层线性注意力的 recurrent state 按槽位算）",
+      _a[_a.index("--parallel") + 1] == "1")
+check("K1h KV cache 走 q8_0；填 f16 时反而不传该参数",
+      "--cache-type-k" in _a and "--cache-type-k" not in kargs(kv_cache_type="f16"))
+check("K1i flash_attn=False 时不传 --flash-attn",
+      "--flash-attn" not in kargs(flash_attn=False))
+check("K1j reasoning_format=none 时不传 --reasoning-format",
+      "--reasoning-format" not in kargs(reasoning_format="none"))
+check("K1k 上下文长度通过 -c 传下去", _a[_a.index("-c") + 1] == "8192")
+check("K1l extra_args 原样追加到命令行尾",
+      kargs(extra_args="--image-max-tokens 1024")[-2:] == ["--image-max-tokens", "1024"])
+
+# ---- K2 参数签名 ----
+_s1 = GBm._signature(KCFG)
+check("K2a 同一份配置 -> 同一签名", GBm._signature(dict(KCFG)) == _s1)
+check("K2b 换上下文 -> 签名变化（会触发重建）",
+      GBm._signature({**KCFG, "context_size": 4096}) != _s1)
+check("K2c 换模型路径 -> 签名变化",
+      GBm._signature({**KCFG, "model": r"C:\x\b.gguf"}) != _s1)
+check("K2d 换 mmproj -> 签名变化",
+      GBm._signature({**KCFG, "mmproj": r"C:\x\other.gguf"}) != _s1)
+check("K2e batch / ubatch 这类吃显存的参数也在签名里",
+      GBm._signature({**KCFG, "batch": 1024}) != _s1
+      and GBm._signature({**KCFG, "ubatch": 256}) != _s1)
+
+# ---- K3 mmproj 识别与标签往返 ----
+check("K3a mmproj 识别：含 mmproj / clip 开头 / 含 vision",
+      GBm._is_mmproj("mmproj-model-bf16.gguf") and GBm._is_mmproj("clip-vit.gguf")
+      and GBm._is_mmproj("vision-tower.gguf"))
+check("K3b 主干模型不会被误判成 mmproj",
+      not GBm._is_mmproj("Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf"))
+check("K3c path_from_label 把「（无 / 纯文本）」翻成空串",
+      GBm.path_from_label(GBm._NONE_MMPROJ) == "")
+check("K3d path_from_label 给的是文件路径时原样返回",
+      GBm.path_from_label(r"H:\AI\models\LLM\x.gguf") == r"H:\AI\models\LLM\x.gguf")
+
+# ---- K4 签名单例：复用与重建 ----
+GBm.release(force=True)
+_i1 = GBm.acquire(dict(KCFG))
+_i2 = GBm.acquire(dict(KCFG))
+check("K4a 同签名第二次 acquire 复用同一实例", _i1 is _i2)
+_i3 = GBm.acquire({**KCFG, "context_size": 4096})
+check("K4b 换了上下文后 acquire 给的是新实例", _i3 is not _i1)
+check("K4c 被顶掉的旧实例已标记关闭", _i1._closed)
+GBm.release(force=True)
+check("K4d release 之后 current_server() 为空", GBm.current_server() is None)
+
+# ---- K5 就绪轮询 ----
+_ok = kserver()
+_ok.ensure_ready(timeout=10)
+check("K5a /health 返回 ok 时 ensure_ready 直接返回", _ok._ready is True)
+
+try:
+    kserver(alive=False).ensure_ready(timeout=5)
+    _m1 = ""
+except GBm.GgufError as e:
+    _m1 = str(e)
+check("K5b 进程提前退出 -> 立刻报错而不是干等到超时",
+      "退出" in _m1 and "退出码" in _m1, _m1.splitlines()[0] if _m1 else "(没抛错)")
+
+_kc, _kb = _FakeAPI.health_code, _FakeAPI.health_body
+_FakeAPI.health_code, _FakeAPI.health_body = 503, {"status": "loading model"}
+try:
+    kserver().ensure_ready(timeout=1.2)
+    _m2 = ""
+except GBm.GgufError as e:
+    _m2 = str(e)
+finally:
+    _FakeAPI.health_code, _FakeAPI.health_body = _kc, _kb
+check("K5c 一直 503（权重还在传）时最终按超时报警", "超时" in _m2,
+      _m2.splitlines()[0] if _m2 else "(没抛错)")
+
+# ---- K6 chat：纯文本 ----
+_FakeAPI.payloads = []
+_r = _ok.chat(system="SYS", user="USR", max_tokens=8, temperature=0.3)
+_p = _FakeAPI.payloads[-1] if _FakeAPI.payloads else {}
+check("K6a content 与 reasoning_content 分开取回",
+      _r["text"] == "TAGGED-OUT" and _r["reasoning"] == "hidden-thought",
+      f'{_r["text"]!r} / {_r["reasoning"]!r}')
+check("K6b 从 timings 拆出 prefill / 解码两段时间",
+      abs(_r["prefill_s"] - 0.3) < 1e-9 and abs(_r["decode_s"] - 0.2) < 1e-9,
+      f'{_r["prefill_s"]} / {_r["decode_s"]}')
+check("K6c usage 的 token 数被带出来",
+      _r["prompt_tokens"] == 11 and _r["completion_tokens"] == 7)
+check("K6d 系统提示词与用户提示词各成一条 message",
+      [m["role"] for m in _p.get("messages", [])] == ["system", "user"],
+      str([m["role"] for m in _p.get("messages", [])]))
+check("K6e 默认关思考：chat_template_kwargs.enable_thinking=False",
+      _p.get("chat_template_kwargs", {}).get("enable_thinking") is False)
+check("K6f 纯文本时 content 是字符串而不是数组",
+      isinstance(_p["messages"][-1]["content"], str))
+check("K6g max_tokens / temperature 按请求传下去",
+      _p.get("max_tokens") == 8 and abs(_p.get("temperature") - 0.3) < 1e-9)
+
+# ---- K7 chat：带图 ----
+_kimg_dir = os.path.join(TMP_ROOT, "kimg")
+os.makedirs(_kimg_dir, exist_ok=True)
+_kimg = os.path.join(_kimg_dir, "big.png")
+Image.new("RGB", (400, 300), (10, 200, 30)).save(_kimg)
+
+_FakeAPI.payloads = []
+_imgs = GBm.encode_image_file(_kimg, 512)
+_ok.chat(system="SYS", user="USR", images=_imgs, max_tokens=8, enable_thinking=True)
+_pi = _FakeAPI.payloads[-1]
+_c = _pi["messages"][-1]["content"]
+check("K7a 带图时 content 变成数组（text + image_url）",
+      isinstance(_c, list) and [x["type"] for x in _c] == ["text", "image_url"],
+      str([x.get("type") for x in _c]))
+check("K7b 图片走 base64 data URI",
+      _c[1]["image_url"]["url"].startswith("data:image/"),
+      _c[1]["image_url"]["url"][:40])
+check("K7c base64 能解回真实图片字节",
+      len(_b64.b64decode(_c[1]["image_url"]["url"].split(",", 1)[1])) > 100)
+check("K7d enable_thinking=True 时不注入 chat_template_kwargs",
+      "chat_template_kwargs" not in _pi)
+check("K7e mime 按扩展名推断",
+      GBm.mime_for_name("a.JPG") == "image/jpeg"
+      and GBm.mime_for_name("a.webp") == "image/webp"
+      and GBm.mime_for_name("a.png") == "image/png")
+_FakeAPI.payloads = []
+_ok.chat(system="SYS", user="USR", images=[_imgs], max_tokens=8)
+_pi2 = _FakeAPI.payloads[-1]
+check("K7f 包成列表 [ (mime, bytes) ] 也照样工作（上面测的是裸元组）",
+      isinstance(_pi2["messages"][-1]["content"], list)
+      and _pi2["messages"][-1]["content"][1]["type"] == "image_url")
+
+# ---- K8 可读的中文报错 ----
+def _start_err(cfg):
+    z = GBm.GgufServer(cfg)
+    z.port = 1
+    try:
+        z._start()
+        return ""
+    except GBm.GgufError as e:
+        return str(e)
+
+
+_e1 = _start_err({"server_exe": os.path.join(TMP_ROOT, "nope.exe"),
+                  "model": os.path.join(TMP_ROOT, "nope.gguf")})
+check("K8a 找不到 llama-server.exe -> 报错带文件名与下载指引",
+      "llama-server.exe" in _e1 and "llama.cpp" in _e1, _e1.splitlines()[0])
+_e2 = _start_err({"server_exe": os.path.abspath(__file__),
+                  "model": os.path.join(TMP_ROOT, "nope.gguf")})
+check("K8b 找不到 gguf -> 报错里带该路径",
+      "nope.gguf" in _e2, _e2.splitlines()[0])
+_e3 = _start_err({"server_exe": os.path.abspath(__file__),
+                  "model": os.path.abspath(__file__),
+                  "mmproj": os.path.join(TMP_ROOT, "nope_mm.gguf")})
+check("K8c mmproj 路径写错时单独报错（不会退化成一堆难懂的 llama.cpp 报错）",
+      "mmproj" in _e3, _e3.splitlines()[0])
+
+# ---- K9 显存需求估算（喂给「腾显存」那步的阈值）----
+_KNODE = QM.Qwen35BatchImageTagger()
+_fake_gguf = os.path.join(TMP_ROOT, "fake4m.gguf")
+with open(_fake_gguf, "wb") as fh:
+    fh.write(b"\0" * (4 * 1024 * 1024))
+_be = {"kind": "qwen35_gguf", "cfg": {"model": _fake_gguf, "server_exe": "x"}}
+check("K9a 无 mmproj：按「权重×1.10 + 1.2GiB」估",
+      _KNODE._gguf_need_mib(_be) == int(4.0 * 1.10 + 1200), str(_KNODE._gguf_need_mib(_be)))
+_be2 = {"kind": "qwen35_gguf",
+        "cfg": {"model": _fake_gguf, "server_exe": "x", "mmproj": _fake_gguf}}
+check("K9b 有 mmproj：把它的体积也算进去",
+      _KNODE._gguf_need_mib(_be2) == int(8.0 * 1.10 + 1200), str(_KNODE._gguf_need_mib(_be2)))
+check("K9c backend 不是 GGUF 节点输出时退回保守默认值，不抛异常",
+      _KNODE._gguf_need_mib({"kind": "wrong"}) == 20000)
+
+# ---- K10 图片编码 / 缩放 ----
+_m0, _b0 = GBm.encode_image_file(_kimg, 0)
+_m1, _b1 = GBm.encode_image_file(_kimg, 64)
+check("K10a max_side=0 时原样返回字节",
+      _m0 == "image/png" and len(_b0) == os.path.getsize(_kimg))
+check("K10b 给了 max_side 后重新编码、体积明显变小",
+      len(_b1) < len(_b0), f"{len(_b0)} -> {len(_b1)}")
+with Image.open(_kimg) as _im0:
+    _wh0 = _im0.size
+with Image.open(__import__("io").BytesIO(_b1)) as _im1:
+    _wh1 = _im1.size
+check("K10c 缩放保持长边不超过 max_side 且比例不变",
+      max(_wh1) <= 64 and abs(_wh1[0] / _wh1[1] - _wh0[0] / _wh0[1]) < 0.02,
+      f"{_wh0} -> {_wh1}")
+
+# ---- K11 节点注册与默认值 ----
+_NM = QM.NODE_CLASS_MAPPINGS
+check("K11a 「GGUF 后端」节点已注册，输出类型为 QWEN35_BACKEND",
+      "Qwen35GGUFServer" in _NM
+      and _NM["Qwen35GGUFServer"].RETURN_TYPES == ("QWEN35_BACKEND",),
+      str(_NM.get("Qwen35GGUFServer")))
+_kit = _NM["Qwen35GGUFServer"].INPUT_TYPES()
+check("K11b 三个必选控件 model / mmproj / server_exe 都在",
+      all(k in _kit.get("required", {}) for k in ("model", "mmproj", "server_exe")),
+      str(list(_kit.get("required", {}))))
+check("K11c 两个主节点都接受 backend 连线输入",
+      "backend" in QM.Qwen35BatchImageTagger.INPUT_TYPES().get("optional", {})
+      and "backend" in QM.Qwen35PromptEnhancer.INPUT_TYPES().get("optional", {}))
+check("K11d parallel 默认 1（不是 llama-server 的 4）",
+      _kit["optional"]["parallel"][1]["default"] == 1,
+      str(_kit["optional"]["parallel"][1].get("default")))
+check("K11e n_gpu_layers 默认 -1（交给 llama.cpp 自动 fit）",
+      _kit["optional"]["n_gpu_layers"][1]["default"] == -1,
+      str(_kit["optional"]["n_gpu_layers"][1].get("default")))
+check("K11f KV cache 默认 q8_0",
+      _kit["optional"]["kv_cache_type"][1]["default"] == "q8_0")
+
+# ---- K12 GGUF 路径下必须先腾显存（本轮修的坑）----
+# 之前 GGUF 分支不调 _free_vram：ComfyUI 常驻的那份不放手，llama-server 只能
+# 拿零头，llama.cpp 不报错、只是安静地把层摊到 CPU。这里钉住这个行为。
+import inspect as _insp                                # noqa: E402
+_src_tag = _insp.getsource(QM.Qwen35BatchImageTagger.tag_folder)
+_src_enh = _insp.getsource(QM.Qwen35PromptEnhancer.enhance)
+check("K12a 打标节点：GGUF 分支里先调了 _free_vram",
+      "_free_vram" in _src_tag and "_gguf_need_mib" in _src_tag)
+check("K12b 扩写节点：GGUF 分支里先调了 _free_vram",
+      "_free_vram" in _src_enh and "_gguf_need_mib" in _src_enh)
+check("K12c 腾显存时用的是 gguf 实际大小，而不是 HF 的 quant 档位",
+      "_gguf_need_mib(backend)" in _src_tag and "_gguf_need_mib(backend)" in _src_enh)
+
+_fake_srv.shutdown()
 
 # ---- 收尾 ----
 print()

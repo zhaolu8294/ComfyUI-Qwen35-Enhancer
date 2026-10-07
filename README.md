@@ -211,6 +211,113 @@ pip install flash-linear-attention
 
 模型下载见 [🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)。
 
+## 跑得动 27B：GGUF 后端（llama.cpp）
+
+上面的 HF 路径对 8B / 9B 够用，但对 **Qwen3.8-27B** 这类大模型直接废掉：
+27.78B dense、BF16 权重 **55.56GB**，24GB 卡装不下。而要命的是
+`device_map="auto"` **不会报错** —— 它只会安静地把一部分层摊到 CPU，
+速度从 40~80 tok/s 掉到 **0.6~3.4 tok/s**（掉一两个数量级），日志里一个字都不提。
+
+把 55GB 压到能装下的唯一现实做法是量化。几条路的对比：
+
+| 路线 | 需要下载 | 驻留显存 | 结论 |
+|------|---------|---------|------|
+| bnb 4bit（HF 路径） | 55.56GB 原版权重 | ~19GB | 能跑，但为了一份量化结果先下 55GB |
+| FP8 | 30.9GB | >24GB | 装不下 |
+| AWQ / GPTQ | — | — | 本机未装 autoawq 等工具链 |
+| **GGUF Q4_K_M** | **16.2GB + 0.9GB** | **~19GB** | **✅ 下载量最小、开箱即用** |
+
+所以这里走 **GGUF + llama-server**：模型以量化形式落盘，显存里放的就是量化权重，
+不存在「下 55GB 再压成 16GB」这种浪费。
+
+### 1. 装 llama.cpp（Windows CUDA 预编译包，解压即用）
+
+从 [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases) 下这两个
+**同 build** 的包，解压到**同一个目录**（例如 `H:\AI\llama.cpp\`）：
+
+| 文件 | 作用 |
+|------|------|
+| `llama-<build>-bin-win-cuda-13.4-x64.zip` | `llama-server.exe` 及 ggml/llama 的 dll |
+| `cudart-llama-bin-win-cuda-13.4-x64.zip` | CUDA 运行时（`cublas64_13.dll` 等）。**缺了会启动失败** |
+
+> CUDA 版本按你的驱动选：`cuda-12.4` / `cuda-13.4` 都有对应包。
+> 解压后子目录层级无所谓，节点会在三层深度内自动找到 `llama-server.exe`。
+
+### 2. 下模型（主干 + 视觉投影，缺一不可）
+
+以 Qwen3.8-27B 的去审查版为例，仓库
+[`huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF`](https://hf-mirror.com/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF)
+（国内镜像 `hf-mirror.com`，前缀统一为
+`https://hf-mirror.com/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF/resolve/main/`
++ 文件名 + `?download=true`）：
+
+| 文件 | 大小 | 必需 |
+|------|------|------|
+| `Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf` | 16.19GB | 主干。备选档位：`Q4_K` 15.66GB / `UD-IQ4_XS` 13.41GB / `Q5_K_XL` 18.19GB |
+| `mmproj-model-bf16.gguf` | 0.89GB | **打标必须**。这是视觉塔，不下它 llama-server 会加载成纯文本模型，图片被直接丢掉 |
+
+存放位置（任选，节点都会扫）：
+
+- `ComfyUI/models/LLM/`
+- `H:\AI\models\LLM\`（`H:\AI\llama.cpp\` 的上一级 + `models\LLM`）
+- `H:\AI\LLM\`
+- 或设环境变量 `QWEN35_GGUF_DIR` 指向任意目录（多个用 `;` 分隔）
+
+### 3. 接线
+
+新节点 **`GGUF Backend (llama.cpp) - Qwen3.8 / 27B`**（分类 `Qwen35/Backend`）：
+
+| 控件 | 默认 | 说明 |
+|------|------|------|
+| `model` | 自动扫描 | 主干 `.gguf` |
+| `mmproj` | `（无 / 纯文本）` | **打标必须选** |
+| `server_exe` | `auto` | 自动找；也可手填路径 |
+| `context_size` | 8192 | 打标用不了多长。**吃显存的是 KV 不是权重** |
+| `kv_cache_type` | `q8_0` | `q8_0` 是速度/显存的好平衡 |
+| `n_gpu_layers` | **-1** | -1 = 不传 `-ngl`，交给 llama.cpp 自动 fit。**填具体数字会关掉自动 fit**，估错就静默退回 CPU |
+| `parallel` | **1** | **别调大**。Qwen3.8 有 48 层线性注意力（Gated DeltaNet），每层按**序列槽**存 recurrent state；llama-server 默认值是 4，槽位一多白吃约 0.44GiB |
+| `flash_attn` | true | 更省 KV 也更快 |
+| `reasoning_format` | `deepseek` | 把思考块引到独立的 `reasoning_content`，`content` 里只剩最终答案 |
+| `extra_args` | 空 | 原样追加，例如 `--image-max-tokens 1024` 限制视觉 token 数 |
+
+把这个节点的 `backend` 输出，连到**扩写节点**或**批量打标节点**的 `backend` 输入即可。
+
+> `backend` 是**可选输入线**：不连的节点完全走原来的 transformers 路径，
+> 行为一个字节都没变 —— 旧工作流不用改。
+
+### 4. 实测
+
+4090D 24GB + Qwen3.8-27B `UD-Q4_K_XL`：
+
+```
+[显存] 加载后已用 23638 MiB / 24564 MiB
+[耗时] 加载 109.2s
+  回复     : 'The capital of France is Paris.'
+  prompt   : 36 tok / 0.27s
+  生成     : 8 tok / 0.18s  =  45.1 tok/s
+```
+
+**45.1 tok/s** 是满血 GPU 的量级。如果打标日志里掉到个位数 tok/s，
+先看有没有 `offloaded ... to CPU` —— 那说明显存不够、层被摊到 CPU 了。
+
+### 5. 显存要腾出来
+
+llama-server 是**独立进程**，和 ComfyUI 抢同一块显存。第一次推理前节点会先
+`unload_all_models()` + `free_memory()` 把 ComfyUI 自己常驻的那份放掉
+（打标场景本来也不需要 SD 模型）—— 不做这步，llama-server 只能捡零头，
+然后就是上面说的「不报错、悄悄变慢」。
+
+### 什么时候别用这条路
+
+- **ComfyUI-GGUF 插件不适用**：那是给扩散模型写的，它把 GGUF **反量化回浮点**再喂 torch。
+  对 9B 无所谓，对 27B 等于绕一圈回到 55GB。
+- **`llama-cpp-python` 也不走**：官方只发 CPU-only 的 Windows wheel，
+  CUDA 版要自己编译（Python 3.13 + 新版 llama.cpp，坑多，且升级二进制要重编整个包）。
+- **`transformers` 的 GGUF 支持同理**，也是反量化路线。
+
+走外部进程还有一个附带好处：llama-server 崩了拖不垮 ComfyUI，
+也可以单独开它的网页界面调参。
+
 ## 节点参数
 
 分类：`Qwen35/Prompt` ｜ 输入：文本（+ 可选图） ｜ 输出：`STRING`（符合 H3 规范的提示词）

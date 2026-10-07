@@ -102,6 +102,30 @@ import torch
 
 import folder_paths
 
+# GGUF / llama.cpp 后端（可选）。两个主节点都可以通过一根可选输入线连上它，
+# 从而改用 GGUF 量化模型推理 —— 这是跑 Qwen3.8-27B 这类大模型的**唯一现实路径**
+# （27.78B dense，BF16 权重 55.56GB，24GB 卡装不下，必须量化）。
+# 加载方式有三条，因为本文件被两种方式导入：
+#   · ComfyUI 正常加载 -> 本文件是包的一部分，走相对导入
+#   · 测试脚本按顶层模块导入（sys.path 里有本目录）-> 走普通导入
+#   · 兜底 -> 直接按文件路径加载，取到就行
+# 三条都失败才真的报错，这样「没装 llama.cpp 也能用原来的 transformers 路径」。
+try:
+    from . import gguf_backend
+except Exception:
+    try:
+        import gguf_backend
+    except Exception:
+        try:
+            _gguf_spec = importlib.util.spec_from_file_location(
+                "gguf_backend", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             "gguf_backend.py")
+            )
+            gguf_backend = importlib.util.module_from_spec(_gguf_spec)
+            _gguf_spec.loader.exec_module(gguf_backend)
+        except Exception:                              # pragma: no cover
+            gguf_backend = None
+
 logger = logging.getLogger("Qwen35Enhancer")
 
 # ---------------------------------------------------------------------------
@@ -1389,6 +1413,12 @@ class Qwen35PromptEnhancer:
                 "mode": (["text2video", "image2video", "reference"], {"default": "text2video"}),
             },
             "optional": {
+                # 可选输入（不是控件）：把「GGUF 后端（llama.cpp）」节点连到这里，
+                # 就用 GGUF 量化模型推理 —— 这是跑 Qwen3.8-27B 这类大模型的唯一可行路径。
+                # 不连就是原来的 HF 模型 + transformers，老工作流完全不受影响。
+                # 因为它是**输入**而非 widget，不占 widgets_values 的位置，
+                # 旧工作流载入后这里就是空的，等于没连。
+                "backend": ("QWEN35_BACKEND",),
                 "image": ("IMAGE",),
                 "image_2": ("IMAGE",),
                 "image_3": ("IMAGE",),
@@ -1439,12 +1469,17 @@ class Qwen35PromptEnhancer:
         )
 
     # ----------------------------------------------------------------
-    def _free_vram(self, quantization, unload_other_models, pbar, weight=0.0):
+    def _free_vram(self, quantization, unload_other_models, pbar, weight=0.0,
+                   need_mib=None):
         """卸载其他模型 + 尽量把显存还回来，返回耗时秒数。
 
         扩写节点与批量打标节点共用。weight 只决定进度条 mark 到哪 ——
         两个节点的进度分配不同（批量场景下加载要摊到 N 张图上，占比小得多），
         所以由调用方传进来，不在方法里写死。
+
+        need_mib 覆盖「本档量化约需多少显存」这个阈值。默认按 quantization
+        查表；GGUF 路径下 quantization 控件跟真正加载的 gguf 无关，
+        所以那边会显式传进来，否则警告里的数字会驴唇不对马嘴。
 
         ComfyUI 的 async-offload 会 pin 住大量内存，unload_all_models() 不一定
         真的把显存还回来；后面再补一刀 free_memory(按需驱逐) + soft_empty_cache。
@@ -1457,7 +1492,9 @@ class Qwen35PromptEnhancer:
         except Exception as e:
             logger.debug(f"[Qwen35] 拿不到 comfy.model_management: {e}")
 
-        need_mib = _VRAM_NEED_MIB.get(str(quantization), 9000)
+        if need_mib is None:
+            need_mib = _VRAM_NEED_MIB.get(str(quantization), 9000)
+        need_mib = int(need_mib)
         if unload_other_models:
             free_before, _, ram_before = _probe_memory(mm_mod)
             if pbar is not None:
@@ -1721,6 +1758,240 @@ class Qwen35PromptEnhancer:
             # 注意：不要在这里调 torch.cuda.ipc_collect()。ComfyUI 是单进程场景，
             # 该调用在多进程 IPC 句柄表上遍历，实测会带来数秒无谓延迟。
 
+    # ================================================================
+    # GGUF / llama.cpp 后端（扩写与打标共用）
+    #
+    # 为什么需要：Qwen3.8-27B 是 27.78B dense，BF16 权重 55.56GB，24GB 卡
+    # 纯 GPU 装不下；`device_map="auto"` 会静默把层摊到 CPU，速度掉 20~100 倍。
+    # 上 GGUF 量化版（Q4_K_M 约 16.8GB）是唯一现实的路子，而 llama.cpp 官方
+    # 有 Windows CUDA 预编译包，解压即用、不必编译。
+    # ================================================================
+    _GGUF_KIND = "qwen35_gguf"
+
+    @staticmethod
+    def _gguf_cfg(backend):
+        """把「GGUF 后端」节点传来的 handle 翻成 llama-server 的参数字典。"""
+        if gguf_backend is None:
+            raise RuntimeError(
+                "GGUF 后端模块 gguf_backend.py 没加载成功，"
+                "请确认它和 nodes.py 放在同一个目录里。"
+            )
+        if not isinstance(backend, dict) or backend.get("kind") != "qwen35_gguf":
+            raise RuntimeError(
+                "backend 输入不是「GGUF 后端（llama.cpp）」节点的输出。"
+                "请把那个节点连到本节点的 backend 输入上；不连就用原来的 HF 模型。"
+            )
+        cfg = dict(backend.get("cfg") or {})
+        if not cfg.get("model"):
+            raise RuntimeError("GGUF 后端没有选中模型文件（.gguf）。")
+        if not cfg.get("server_exe"):
+            raise RuntimeError(
+                "没找到 llama-server.exe。请下载 llama.cpp 的 Windows CUDA 包：\n"
+                "  llama-<build>-bin-win-cuda-13.4-x64.zip\n"
+                "  cudart-llama-bin-win-cuda-13.4-x64.zip\n"
+                "两个都解压到同一个目录（比如 H:\\AI\\llama.cpp\\），"
+                "再在「GGUF 后端」节点里点一下刷新、选中它。"
+            )
+        return cfg
+
+    def _gguf_need_mib(self, backend):
+        """估算 llama-server 需要多少显存（MiB），给「腾显存」那步当阈值用。
+
+        权重文件大小本身就是下界，再加上 mmproj（Qwen3.8 的约 0.9GiB）和
+        KV / 计算缓冲，按「权重 ×1.10 + 1.2GiB」粗估。宁可估大 —— 它只影响
+        「空闲显存够不够」那句警告，真正决定层放哪的是 llama.cpp 自己的 fit。
+
+        **为什么这步重要**：GGUF 路径下 quantization 控件跟实际加载的 gguf 无关，
+        不覆盖阈值的话警告会按 HF 的档位算，给出误导性的数字 ——
+        而这条警告正是「模型被静默摊到 CPU、速度掉一两数量级」唯一的事前提示。
+        """
+        try:
+            cfg = self._gguf_cfg(backend)
+            need = os.path.getsize(cfg["model"]) / (1024 * 1024)
+            mp = cfg.get("mmproj")
+            if mp and os.path.isfile(mp):
+                need += os.path.getsize(mp) / (1024 * 1024)
+            return int(need * 1.10 + 1200)
+        except Exception as e:
+            logger.debug(f"[Qwen35] 估算 GGUF 显存需求失败，退回默认值: {e}")
+            return 20000
+
+    def _gguf_prepare(self, backend, pbar, n_jobs=0, w_unload=0.0, w_load=0.0):
+        """准备好 llama-server 并等它就绪。返回 (server, 描述, 加载秒数)。"""
+        cfg = self._gguf_cfg(backend)
+        label = str(backend.get("label") or os.path.basename(cfg["model"]))
+        pbar.message(
+            f"正在准备 llama.cpp 后端：{label}"
+            + (f"（之后 {n_jobs} 次生成共用这一个进程）" if n_jobs else "")
+        )
+        pbar.mark(w_unload + 1.0)
+        srv = gguf_backend.acquire(cfg)
+        reused = srv.alive() and srv._ready
+        if reused:
+            pbar.message(f"复用常驻 llama-server（端口 {srv.port}），无需重新加载")
+        t0 = time.perf_counter()
+        srv.ensure_ready(on_status=lambda s: pbar.message(s))
+        t_load = 0.0 if reused else (time.perf_counter() - t0)
+        pbar.mark(w_unload + w_load)
+        if not reused:
+            pbar.message(f"llama-server 就绪（端口 {srv.port}），用时 {t_load:.1f}s")
+        return srv, label, t_load
+
+    def _tag_one_image_gguf(self, server, image_path, system_prompt, user_prompt,
+                            max_image_side, max_new_tokens, temperature,
+                            enable_thinking, seed, output_format, max_chars=0):
+        """GGUF 后端给单张图打标。
+
+        返回值的形状与 transformers 版 `_tag_one_image` **完全一致**
+        （文本、输出 token 数、prefill 秒、解码秒、是否被截断），
+        这样 tag_folder 的主循环、跳过判定、报告、refine 记账全都不用分叉。
+
+        时间分解取自 llama-server 响应里的 `timings`；拿不到时整段都算解码。
+        """
+        mime, blob = gguf_backend.encode_image_file(image_path, max_image_side)
+        r = server.chat(
+            system=str(system_prompt or "").strip(),
+            user=str(user_prompt or ""),
+            images=[(mime, blob)],
+            max_tokens=int(max_new_tokens),
+            # 采样参数与 transformers 路径对齐（top_p 0.9 / repeat_penalty 1.05）。
+            # temperature=0 在 llama.cpp 里就是贪心解码，打标要的就是可复现。
+            temperature=float(temperature),
+            top_p=0.9,
+            top_k=20,
+            min_p=0.0,
+            presence_penalty=0.0,
+            repeat_penalty=1.05,
+            seed=int(seed),
+            enable_thinking=bool(enable_thinking),
+        )
+        text = strip_thinking(r["text"]).strip()
+        if str(output_format) != "raw":
+            text = _normalize_tag_text(text)
+        else:
+            text = text.strip()
+        text, cut = _truncate_output(text, max_chars)
+        return (text,
+                int(r.get("completion_tokens") or 0),
+                float(r.get("prefill_s") or 0.0),
+                float(r.get("decode_s") or 0.0),
+                cut)
+
+    def _enhance_gguf(self, backend, system_prompt, user_prompt, mode,
+                      image, image_2, image_3, image_4, max_images, max_image_side,
+                      temperature, max_new_tokens, seed, enable_thinking, bilingual,
+                      keep_model_loaded, pbar, t_start):
+        """扩写节点的 GGUF 路径：图片 base64 走 llama-server 的 OpenAI 接口。
+
+        报告刻意比 transformers 路径短：那边大段内容是显存体检、设备统计、
+        vision patch_embed 诊断 —— 全是 torch 侧的排查工具，GGUF 后端下没有
+        对应物，硬套只会输出一堆误导性数字。
+        """
+        t_unload = 0.0
+        gserver, label, t_load = self._gguf_prepare(
+            backend, pbar, 0, _W_UNLOAD, _W_LOAD
+        )
+
+        t0 = time.perf_counter()
+        pil_images = self._collect_images(
+            image, image_2, image_3, image_4, max_images, max_image_side
+        )
+        blobs = gguf_backend.encode_pil_images(pil_images)
+        t_prep = time.perf_counter() - t0
+
+        sys_txt = _inject_mode_hint(system_prompt.strip(), mode) \
+            if system_prompt and system_prompt.strip() else ""
+        logger.info("[Qwen35] GGUF 扩写：%s，参考图 %d 张", label, len(blobs))
+
+        t0 = time.perf_counter()
+        r_en = gserver.chat(
+            system=sys_txt,
+            user=str(user_prompt or ""),
+            images=blobs or None,
+            max_tokens=int(max_new_tokens),
+            temperature=float(temperature),
+            top_p=0.9, top_k=20, min_p=0.0,
+            presence_penalty=0.0, repeat_penalty=1.05,
+            seed=int(seed),
+            enable_thinking=bool(enable_thinking),
+        )
+        t_gen = time.perf_counter() - t0
+        prompt = normalize_h3_sections(strip_thinking(r_en["text"]))
+        if not prompt:
+            raise RuntimeError(
+                "模型输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
+            )
+        n_tok = int(r_en.get("completion_tokens") or 0)
+        t_pre = float(r_en.get("prefill_s") or 0.0)
+        t_dec = float(r_en.get("decode_s") or 0.0)
+        pbar.mark(_W_UNLOAD + _W_LOAD + _W_PREP + _W_GEN)
+
+        # ---- 双语第二段：拿英文结果再翻一份中文，纯文本输入，prefill 很便宜 ----
+        prompt_zh = ""
+        zh_out = zh_sec = 0
+        zh_capped = False
+        if str(bilingual) == "en_then_zh":
+            pbar.message("英文完成，正在翻一份中文预览…")
+            zh_cap = _zh_budget(n_tok, int(max_new_tokens))
+            r_zh = gserver.chat(
+                system=TRANSLATE_SYSTEM_PROMPT,
+                user="----- BEGIN H3 PROMPT -----\n" + prompt + "\n----- END H3 PROMPT -----",
+                max_tokens=int(zh_cap),
+                temperature=0.0,          # 翻译是确定性任务，贪心最稳
+                top_p=1.0, top_k=0, min_p=0.0,
+                presence_penalty=0.0, repeat_penalty=1.05,
+                seed=int(seed),
+                enable_thinking=False,    # 只需要输出，永远不要思考块
+            )
+            raw = strip_thinking(r_zh["text"])
+            # 顺序与 transformers 路径一致：剥思考 → 还原中文标签 → 砍英文回声 → 规范三段式。
+            # 标签还原必须排在砍回声之前，否则回声检测认不出中文写法的三段标签。
+            prompt_zh = normalize_h3_sections(
+                _drop_english_echo(_restore_zh_labels(raw))
+            )
+            zh_out = int(r_zh.get("completion_tokens") or 0)
+            zh_sec = float(r_zh.get("seconds") or 0.0)
+            zh_capped = zh_out >= int(zh_cap)
+
+        t_release = 0.0
+        if not keep_model_loaded:
+            # GGUF 后端下 keep_model_loaded=False 表示"跑完就关掉 llama-server"。
+            # 27B Q4 占着约 19GB 显存，留着会让后面出图/出片的节点没显存可用。
+            t0 = time.perf_counter()
+            gguf_backend.release()
+            t_release = time.perf_counter() - t0
+        pbar.finish()
+
+        t_total = time.perf_counter() - t_start
+        lines = [
+            "[Qwen35] ========== 扩写（llama.cpp / GGUF）==========",
+            f"  后端        : llama.cpp llama-server（端口 {gserver.port}）",
+            f"  模型        : {label}",
+            f"  显存策略    : 由 llama.cpp 自动分配层（未强传 -ngl），"
+            f"上下文 {gserver.cfg.get('context_size')} tok、"
+            f"并行槽 {gserver.cfg.get('parallel')}、"
+            f"KV {gserver.cfg.get('kv_cache_type')}",
+            f"  mode        : {mode}"
+            + (f"，参考图 {len(blobs)} 张" if blobs else "，纯文本"),
+            f"  加载        : {t_load:6.2f}s"
+            + ("（复用常驻进程，未重新加载）" if t_load <= 0 else ""),
+            f"  生成        : {t_gen:6.2f}s，输出 {n_tok} tok、{len(prompt)} 字符",
+        ]
+        if t_dec > 0:
+            lines.append(f"      其中 prefill  : {t_pre:6.2f}s")
+            lines.append(f"      其中 解码     : {t_dec:6.2f}s  ({n_tok / t_dec:.1f} tok/s)")
+        if prompt_zh:
+            lines.append(
+                f"  中文预览    : {zh_out} tok / {len(prompt_zh)} 字符 / {zh_sec:.1f}s"
+                + (f"（触到预算上限 {zh_cap} tok，可能被截断）" if zh_capped else "")
+            )
+        if t_release > 0:
+            lines.append(f"  释放后端    : {t_release:.2f}s（llama-server 已退出，显存已归还）")
+        lines.append(f"  合计        : {t_total:.2f}s")
+        report = "\n".join(lines)
+        logger.info(report)
+        return {"ui": {"text": [report]}, "result": (prompt, prompt_zh)}
+
     # ----------------------------------------------------------------
     @staticmethod
     def _collect_images(image, image_2, image_3, image_4, max_images, max_side=0):
@@ -1764,11 +2035,29 @@ class Qwen35PromptEnhancer:
                 unload_other_models=True, temperature=0.4, max_new_tokens=1024,
                 seed=42, custom_model_path="", max_image_side=1280,
                 show_progress=True, progress_interval=2.0, bilingual="off",
-                unique_id=None):
+                backend=None, unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
             node_id=unique_id, enabled=show_progress, interval=progress_interval
         )
+
+        # ---- 连了 GGUF 后端就走 llama.cpp + GGUF 量化模型 ----
+        # 没连就是原来的路（HF 模型 + transformers），行为一个字都没改。
+        # 大模型（如 Qwen3.8-27B，BF16 权重 55.56GB）只有走这条才跑得动。
+        if backend:
+            # 先腾显存再拉 llama-server：两边抢同一块 24GB，ComfyUI 常驻的那份
+            # 不让出来，llama.cpp 只会静默把层摊到 CPU（不报错、掉一两数量级）。
+            self._free_vram(
+                quantization, unload_other_models, pbar, _W_UNLOAD,
+                need_mib=self._gguf_need_mib(backend),
+            )
+            return self._enhance_gguf(
+                backend, system_prompt, user_prompt, mode,
+                image, image_2, image_3, image_4, max_images, max_image_side,
+                temperature, max_new_tokens, seed, enable_thinking, bilingual,
+                keep_model_loaded, pbar, t_start,
+            )
+
         path = self._resolve_path(model_name, custom_model_path)
 
         # ---- 1/5 卸载其他模型 + 腾出显存 ----
@@ -3308,6 +3597,10 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 }),
             },
             "optional": {
+                # 可选输入（不是控件）：连上「GGUF 后端（llama.cpp）」节点，
+                # 打标就走 GGUF 量化模型 —— 27B 级模型在 24GB 卡上唯一可行的路子。
+                # 不连就是原来的 HF 模型 + transformers，老工作流一字不改。
+                "backend": ("QWEN35_BACKEND",),
                 "user_prompt": ("STRING", {
                     "multiline": True,
                     "default": DEFAULT_TAGGER_USER_PROMPT,
@@ -3472,7 +3765,7 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                    dry_run=False, keep_model_loaded=False, unload_other_models=True,
                    custom_model_path="", show_progress=True, progress_interval=2.0,
                    bilingual="off", max_output_chars=0, caption_mode="off",
-                   unique_id=None):
+                   backend=None, unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
             node_id=unique_id, enabled=show_progress, interval=progress_interval
@@ -3570,6 +3863,9 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         head = [
             "[Qwen35] ========== 批量打标 ==========",
             f"  文件夹      : {folder}",
+            f"  推理后端    : "
+            + ("llama.cpp / GGUF（量化权重，独立进程 llama-server）"
+               if backend else "transformers / HF 模型（torch 进程内）"),
             f"  打标模式    : {mode_desc}",
             f"  系统提示词  : {preset_used}"
             + (f"（预设：{preset_label}）" if preset_used != "custom"
@@ -3631,32 +3927,53 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             pbar.finish()
             return {"ui": {"text": [report]}, "result": (report, 0)}
 
-        path = self._resolve_path(model_name, custom_model_path)
-
-        # ---- 1/3 卸载其他模型 + 腾出显存（与扩写节点共用同一条链路）----
-        t_unload = self._free_vram(quantization, unload_other_models, pbar, _BW_UNLOAD)
-
-        # ---- 2/3 加载模型：整个文件夹只加载这一次 ----
-        t0 = time.perf_counter()
-        will_reuse = (
-            self._cache["key"] == (path, quantization, attention)
-            and self._cache["model"] is not None
-        )
-        if will_reuse:
-            pbar.message(
-                f"复用常驻模型：{os.path.basename(path)}（{n_jobs} 次生成共用）"
+        # ---- 1~2/3 准备推理后端 ----
+        # 连了 GGUF 后端就走 llama.cpp（显存里放的是量化权重，27B Q4 约 19GB）；
+        # 没连就是原来的 transformers 路径，一字未改。
+        gserver = None
+        model = processor = None
+        backend_label = ""
+        if backend:
+            # GGUF 走的是**外部 llama-server 进程**，它要的显存比 HF 路径更多
+            # （27B Q4 权重 16.2GiB + mmproj 0.9GiB + KV/缓冲 ≈ 19GiB）。
+            # ComfyUI 自己常驻的那份（async-offload pin 住的）不先放掉的话，
+            # llama-server 只能捡零头 —— llama.cpp 的 auto-fit 不会报错，
+            # 只会安安静静把几层摊到 CPU，速度掉一到两个数量级。
+            # 两边抢同一块显存，所以这一步在 GGUF 路径下比 HF 路径下更关键。
+            t_unload = self._free_vram(
+                quantization, unload_other_models, pbar, _BW_UNLOAD,
+                need_mib=self._gguf_need_mib(backend),
+            )
+            gserver, backend_label, t_load = self._gguf_prepare(
+                backend, pbar, n_jobs, _BW_UNLOAD, _BW_LOAD
             )
         else:
-            pbar.message(
-                f"正在加载模型：{os.path.basename(path)}"
-                f"（量化={quantization}；之后 {n_jobs} 次生成共用这一次加载）"
+            path = self._resolve_path(model_name, custom_model_path)
+
+            # ---- 1/3 卸载其他模型 + 腾出显存（与扩写节点共用同一条链路）----
+            t_unload = self._free_vram(quantization, unload_other_models, pbar, _BW_UNLOAD)
+
+            # ---- 2/3 加载模型：整个文件夹只加载这一次 ----
+            t0 = time.perf_counter()
+            will_reuse = (
+                self._cache["key"] == (path, quantization, attention)
+                and self._cache["model"] is not None
             )
-        pbar.mark(_BW_UNLOAD + 1.0)
-        model, processor, freshly_loaded = self._load(path, quantization, attention)
-        t_load = time.perf_counter() - t0
-        pbar.mark(_BW_UNLOAD + _BW_LOAD)
-        if freshly_loaded:
-            pbar.message(f"模型加载完成，用时 {t_load:.1f}s")
+            if will_reuse:
+                pbar.message(
+                    f"复用常驻模型：{os.path.basename(path)}（{n_jobs} 次生成共用）"
+                )
+            else:
+                pbar.message(
+                    f"正在加载模型：{os.path.basename(path)}"
+                    f"（量化={quantization}；之后 {n_jobs} 次生成共用这一次加载）"
+                )
+            pbar.mark(_BW_UNLOAD + 1.0)
+            model, processor, freshly_loaded = self._load(path, quantization, attention)
+            t_load = time.perf_counter() - t0
+            pbar.mark(_BW_UNLOAD + _BW_LOAD)
+            if freshly_loaded:
+                pbar.message(f"模型加载完成，用时 {t_load:.1f}s")
 
         # ---- 3/3 逐张打标 ----
         pbar.begin_stage(_BW_UNLOAD + _BW_LOAD, _BW_TAG)
@@ -3696,12 +4013,22 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                     )
                 t_one = time.perf_counter()
                 try:
-                    text, n_tok, t_pre, t_dec, cut = self._tag_one_image(
-                        model, processor, src, r["prompt"], u_prompt,
-                        int(max_image_side), int(max_new_tokens), float(temperature),
-                        bool(enable_thinking), int(seed) + idx, r["format"],
-                        int(max_output_chars),
-                    )
+                    if gserver is not None:
+                        # GGUF 后端：图片编成 base64 走 llama-server 的 OpenAI 接口。
+                        # 返回值形状与下面那条完全一致，后续记账一行都不用分叉。
+                        text, n_tok, t_pre, t_dec, cut = self._tag_one_image_gguf(
+                            gserver, src, r["prompt"], u_prompt,
+                            int(max_image_side), int(max_new_tokens),
+                            float(temperature), bool(enable_thinking),
+                            int(seed) + idx, r["format"], int(max_output_chars),
+                        )
+                    else:
+                        text, n_tok, t_pre, t_dec, cut = self._tag_one_image(
+                            model, processor, src, r["prompt"], u_prompt,
+                            int(max_image_side), int(max_new_tokens), float(temperature),
+                            bool(enable_thinking), int(seed) + idx, r["format"],
+                            int(max_output_chars),
+                        )
                     if not text:
                         raise RuntimeError(
                             "输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
@@ -3719,7 +4046,11 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                     if _is_comfy_interrupt(e) or isinstance(e, (KeyboardInterrupt, SystemExit)):
                         pbar.finish()
                         if not keep_model_loaded:
-                            self._release()
+                            if gserver is not None:
+                                # GGUF 后端是独立进程，要显式收掉，否则它会一直占着显存
+                                gguf_backend.release()
+                            else:
+                                self._release()
                         logger.warning(
                             f"[Qwen35] 已取消：处理到第 {idx}/{len(todo)} 张"
                             f"（前面已写好的 txt 保留，未完成的那次不会留下半个文件）"
@@ -3764,7 +4095,12 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         t_release = 0.0
         if not keep_model_loaded:
             t0 = time.perf_counter()
-            self._release()
+            if gserver is not None:
+                # llama-server 是独立进程，必须显式收掉 —— 留着它会一直占着
+                # 约 19GB 显存，后面出图/出片的节点就没显存了。
+                gguf_backend.release()
+            else:
+                self._release()
             t_release = time.perf_counter() - t0
 
         t_total = time.perf_counter() - t_start
@@ -3807,10 +4143,24 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 f"  首张 prefill: {first_prefill:6.2f}s"
                 f"（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）"
             )
+        if gserver is not None:
+            # GGUF 后端下没有 torch 侧的显存体检可报，只报进程与端口。
+            lines += [
+                f"  后端        : llama.cpp llama-server（端口 {gserver.port}）",
+                f"  模型        : {backend_label}",
+                f"  加载后端    : {t_load:6.2f}s",
+            ]
+            if t_release > 0:
+                lines.append(
+                    f"  释放后端    : {t_release:6.2f}s（llama-server 已退出，显存已归还）"
+                )
+        else:
+            lines += [
+                f"  加载模型    : {t_load:6.2f}s  ({'本次新加载' if freshly_loaded else '复用常驻'})",
+                f"  卸载其他模型: {t_unload:6.2f}s",
+                f"  卸载打标模型: {t_release:6.2f}s",
+            ]
         lines += [
-            f"  加载模型    : {t_load:6.2f}s  ({'本次新加载' if freshly_loaded else '复用常驻'})",
-            f"  卸载其他模型: {t_unload:6.2f}s",
-            f"  卸载打标模型: {t_release:6.2f}s",
             "  --------------------------------",
             f"  合计        : {t_total:6.2f}s",
         ]
@@ -3833,12 +4183,176 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
 
 
 # ---------------------------------------------------------------------------
+# GGUF 后端节点（llama.cpp / llama-server）
+# ---------------------------------------------------------------------------
+class Qwen35GGUFServer:
+    """持有 llama-server 进程，把 GGUF 量化模型接到扩写 / 打标节点上。
+
+    **为什么需要它**：Qwen3.8-27B 是 27.78B dense，BF16 权重 55.56GB ——
+    24GB 显存根本装不下，而 `device_map="auto"` 不会报错，只会静默把一部分层
+    摊到 CPU，速度从 40~80 tok/s 掉到 1~3 tok/s。GGUF 量化版
+    （Q4_K_M 约 16.8GB + mmproj 0.9GB + KV ≈ 19.7GB）是 24GB 卡上唯一现实的路。
+
+    **用法**：把这个节点的 `backend` 输出连到扩写节点或打标节点的 `backend` 输入。
+    没连线的节点完全不走这条路，行为与以前一模一样。
+
+    **进程何时启动**：节点执行时只打包配置、**不启动进程** —— 免得只是把节点拖到
+    画布上（模型路径还没填好）就让整张图报错。第一次真正推理时才拉起
+    llama-server，之后按参数签名复用同一个进程；换了模型/上下文等才关掉重建。
+    24GB 显存塞不下两个 27B，所以同一时刻**只保留一个** server。
+    ComfyUI 退出时由 atexit 收掉，不留孤儿进程占显存。
+
+    **装 llama.cpp**：从 https://github.com/ggml-org/llama.cpp/releases 下载
+      · llama-<build>-bin-win-cuda-13.4-x64.zip      （含 llama-server.exe）
+      · cudart-llama-bin-win-cuda-13.4-x64.zip       （CUDA 运行时 dll，必须一起）
+    两个都解压到同一个目录（例如 H:\\AI\\llama.cpp\\），重启 ComfyUI 即可在下拉里选到。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        if gguf_backend is None:                       # 模块没加载成功时的兜底
+            return {"required": {
+                "model": (["<gguf_backend.py 未加载，请检查插件目录>"],),
+            }}
+        return {
+            "required": {
+                "model": (gguf_backend.gguf_model_choices(), {
+                    "tooltip": "GGUF 主干模型。自动扫 ComfyUI 的 models/LLM/、"
+                               "H:/F:/J:/G:/D: 下 AI\\models\\LLM\\ 与 AI\\LLM\\；"
+                               "也可以设环境变量 QWEN35_GGUF_DIR 指定别的目录。",
+                }),
+                "mmproj": (gguf_backend.gguf_mmproj_choices(), {
+                    "tooltip": "视觉投影 mmproj。**打标必须选它**，否则 llama-server "
+                               "会加载成纯文本模型，图片直接被丢掉。",
+                }),
+                "server_exe": (gguf_backend.llama_server_choices(), {
+                    "tooltip": "llama-server.exe 的位置。选「auto」就自动在常见目录里找。",
+                }),
+            },
+            "optional": {
+                "context_size": ("INT", {
+                    "default": 8192, "min": 512, "max": 262144, "step": 512,
+                    "tooltip": "上下文长度。打标用不了多长，8192 足够；"
+                               "调大它吃的是显存（KV cache 才是显存杀手，不是权重）。",
+                }),
+                "kv_cache_type": (["q8_0", "q4_0", "f16"], {
+                    "default": "q8_0",
+                    "tooltip": "KV cache 量化。q8_0 是速度与显存的好平衡；"
+                               "f16 更准更占显存，q4_0 更省。",
+                }),
+                "n_gpu_layers": ("INT", {
+                    "default": -1, "min": -1, "max": 999, "step": 1,
+                    "tooltip": "-1 = 交给 llama.cpp 自己决定层放哪（推荐）。"
+                               "填具体数字会关掉它的自动 fit，估错就可能静默退回 CPU，"
+                               "那种慢是掉一到两个数量级的、很难发现。",
+                }),
+                "parallel": ("INT", {
+                    "default": 1, "min": 1, "max": 8, "step": 1,
+                    "tooltip": "并行序列槽。**保持 1**：Qwen3.8 有 48 层线性注意力，"
+                               "每层按槽位存 recurrent state，llama-server 默认值是 4，"
+                               "白吃约 0.44 GiB 显存（24GB 卡上不值得）。",
+                }),
+                "flash_attn": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Flash Attention。开着更省 KV 显存也更快。",
+                }),
+                "reasoning_format": (["deepseek", "none"], {
+                    "default": "deepseek",
+                    "tooltip": "deepseek = 把思考块引到独立的 reasoning_content 字段，"
+                               "content 里只剩最终答案（推荐）；none = 不处理。",
+                }),
+                "extra_args": ("STRING", {
+                    "default": "",
+                    "tooltip": "附加命令行参数，原样追加到 llama-server。"
+                               "例如 --image-max-tokens 1024 可以限制视觉 token 数。",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("QWEN35_BACKEND",)
+    RETURN_NAMES = ("backend",)
+    FUNCTION = "provide"
+    CATEGORY = "Qwen35/Backend"
+    OUTPUT_NODE = False
+    DESCRIPTION = "启动并持有 llama-server，供扩写 / 打标节点连线的 GGUF 后端"
+
+    def provide(self, model, mmproj, server_exe, context_size=8192,
+                kv_cache_type="q8_0", n_gpu_layers=-1, parallel=1,
+                flash_attn=True, reasoning_format="deepseek", extra_args=""):
+        if gguf_backend is None:
+            raise RuntimeError(
+                "gguf_backend.py 没加载成功，请确认它和 nodes.py 在同一个目录下。"
+            )
+        m = gguf_backend.path_from_label(model)
+        pj = gguf_backend.path_from_label(mmproj)      # 「（无 / 纯文本）」-> ""
+        sx = gguf_backend.server_from_choice(server_exe)
+
+        cfg = {
+            "server_exe": sx,
+            "model": m,
+            "mmproj": pj,
+            "context_size": int(context_size),
+            "kv_cache_type": str(kv_cache_type),
+            "n_gpu_layers": int(n_gpu_layers),
+            "parallel": int(parallel),
+            "flash_attn": bool(flash_attn),
+            "reasoning_format": str(reasoning_format),
+            "extra_args": str(extra_args or ""),
+        }
+        label = os.path.basename(m) if m else "<未选模型>"
+        if pj:
+            label += "  +  " + os.path.basename(pj)
+
+        # 这里只做「缺东西就早点说清楚」，不启动进程 —— 拖到画布上不该有副作用
+        warn = []
+        if not m:
+            warn.append("没找到 GGUF 主干模型：把 .gguf 放进 models/LLM/，"
+                        "或设环境变量 QWEN35_GGUF_DIR 指向你的模型目录")
+        if not pj:
+            warn.append("没选 mmproj：打标会把图片丢掉（纯文本模式）")
+        if not sx:
+            warn.append("没找到 llama-server.exe：下载 llama-<build>-bin-win-cuda-*.zip "
+                        "与 cudart-llama-bin-win-cuda-*.zip 解压到同一目录")
+
+        lines = [
+            "[Qwen35] ========== GGUF 后端配置 ==========",
+            f"  主干模型    : {m or '<未找到>'}",
+            f"  视觉投影    : {pj or '（无，纯文本）'}",
+            f"  llama-server: {sx or '<未找到>'}",
+            f"  上下文 / KV : {int(context_size)} tok / {kv_cache_type}",
+            f"  层放置      : "
+            + ("交给 llama.cpp 自动 fit（未强传 -ngl）" if int(n_gpu_layers) < 0
+               else f"手动 -ngl {int(n_gpu_layers)}"),
+            f"  并行槽      : {int(parallel)}"
+            + ("（1 是对的：线性注意力的 recurrent state 按槽位分配）"
+               if int(parallel) == 1 else " ⚠ 大于 1 会多占显存"),
+            "  说明        : 进程**现在还没启动**，第一次推理时才拉起并按参数签名复用",
+        ]
+        if warn:
+            lines.append("  ⚠ 待处理：")
+            for w in warn:
+                lines.append(f"     - {w}")
+        else:
+            lines.append("  ✓ 配置完整，可以连线使用")
+        report = "\n".join(lines)
+        logger.info(report)
+
+        return ({"kind": self._GGUF_KIND, "label": label, "cfg": cfg,
+                 "report": report},)
+
+    # 与基类共用同一个常量，避免两处写串
+    _GGUF_KIND = "qwen35_gguf"
+
+
+# ---------------------------------------------------------------------------
 NODE_CLASS_MAPPINGS = {
     "Qwen35PromptEnhancer": Qwen35PromptEnhancer,
     "Qwen35BatchImageTagger": Qwen35BatchImageTagger,
+    "Qwen35GGUFServer": Qwen35GGUFServer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "Qwen35PromptEnhancer": "Qwen3.5 / Qwen3-VL Prompt Enhancer",
     "Qwen35BatchImageTagger": "Qwen3.5 Batch Image Tagger (txt)",
+    "Qwen35GGUFServer": "GGUF Backend (llama.cpp) - Qwen3.8 / 27B",
 }
