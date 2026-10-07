@@ -51,7 +51,9 @@ MiniMax H3 对提示词格式有硬性要求：
   同时控制台按间隔输出进度行（真实终端下额外有一条原地刷新的实时条）。
   并接上了 ComfyUI 的中断标志，前端点「取消」能真正打断长生成。
 - **批量打标**（第二个节点 `Qwen35BatchImageTagger`）—— 填一个文件夹路径，给里面每张图
-  生成**与图片同目录同名**的 `.txt`，系统提示词可改。**一次加载打完整个文件夹**（走扩写节点
+  生成**与图片同目录同名**的 `.txt`，系统提示词可改。内置 **6 套预设**（3 主题 × 中英），
+  输出「只写内容、不写风格」的现代自然语言描述，NSFW 如实描述；可选**中英双语同时输出**
+  （`图名.txt` + `图名_zh.txt`）和**输出字符数上限**。**一次加载打完整个文件夹**（走扩写节点
   循环 N 次的话每张都要重载）；默认 `overwrite=skip` **绝不覆盖已有标签**；单张失败不中断
   整批，但「取消」会立刻中止并保留已完成的部分。详见「批量打标节点」。
 
@@ -336,8 +338,9 @@ E:\datasets\mydata\
    `Qwen3.5 Batch Image Tagger (txt)`，分类在 `Qwen35/Batch`）。
 2. 填 **`folder_path`**。绝对路径即可；也可写 `input/xxx` 或 `output/xxx`（会解析到
    ComfyUI 的对应目录），从资源管理器复制来的带引号路径也认。
-3. 按训练目标选 **`system_preset`** —— 写实照片 / 人像选 `photoreal`、二次元角色或画师
-   插画选 `character`、场景概念图选 `scene`；想自己写提示词就保持 `custom`（默认）。
+3. 按训练目标选 **`system_preset`** —— 三套主题（写实照片 / 二次元角色 / 场景环境）
+   × 中英两种输出语言 = **6 套**。要英文描述就选不带后缀的（`photoreal`），要中文
+   描述就选带 `_zh` 的（`photoreal_zh`）。想自己写提示词就保持 `custom`（默认）。
 4. 想先确认清单，就把 `dry_run` 打开跑一次 —— 它只列出「哪些图会被处理、txt 写到哪」，
    **不加载模型、不写任何文件**。确认无误后关掉 `dry_run` 再跑。
 
@@ -346,9 +349,11 @@ E:\datasets\mydata\
 | 规则 | 说明 |
 |---|---|
 | 文件名 | `图片名.txt`（`output_suffix` 可改成 `图片名_tags.txt`） |
+| 双语命名 | `bilingual=en_then_zh` 时英文仍写 `图名.txt`、中文写 `图名_zh.txt`。`output_suffix` 排在前面：`_tags` → `图名_tags.txt` / `图名_tags_zh.txt` |
 | 位置 | **图片所在目录**，不新建标签文件夹 |
 | 编码 | 默认 `utf-8`，可选 `utf-8-sig` / `gbk` / `utf-16` |
 | 已有标签 | 默认 `overwrite=skip`：**绝不覆盖**。零字节的旧 txt 视为上次写失败的残留，会重新打标 |
+| 双语下跳过 | **按语言各自判断** —— 英文已有、中文还缺时只补中文那份，不重跑已写好的英文 |
 | 原子写 | 先写 `.qwen35tmp` 再原子替换 —— 中途取消或断电不会留下半个文件被下游当成有效标签 |
 | 空输出 | 视为该张失败，**不写空 txt**（否则下游会以为这张已打好标） |
 | 画面处理 | 自动 EXIF 转正（手机竖拍图不会躺着喂给模型）、统一 RGB（灰度 / 带 alpha / CMYK 都能读）、按 `max_image_side` 等比缩小 |
@@ -358,7 +363,7 @@ E:\datasets\mydata\
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `folder_path` | 空 | 图片文件夹。**必填** |
-| `system_preset` | `custom` | 内置预设：`custom` / `photoreal` / `character` / `scene`。选非 `custom` 时**忽略** `system_prompt` |
+| `system_preset` | `custom` | **6 套**内置预设（3 主题 × 中英，见下节）。选非 `custom` 时**忽略** `system_prompt` 与 `output_format` |
 | `system_prompt` | danbooru 风格 | 打标规则，可整个换掉（仅 `system_preset=custom` 时生效） |
 | `user_prompt` | `给这张图打标。` | 跟图片一起发出去的那句话 |
 | `quantization` / `attention` / `enable_thinking` | `none` / `auto` / `False` | 与扩写节点同义 |
@@ -366,7 +371,7 @@ E:\datasets\mydata\
 | `overwrite` | `skip` | `skip` / `overwrite` |
 | `image_exts` | `.png,.jpg,.jpeg,.webp,.bmp` | 认哪些扩展名；写 `png` 或 `.png` 都行 |
 | `output_suffix` / `output_encoding` | 空 / `utf-8` | 文件名后缀、文本编码 |
-| `output_format` | `tags_one_line` | `tags_one_line` = 规整成一行逗号标签；`raw` = 原样写模型输出（换成自然语言描述提示词时用这个） |
+| `output_format` | `tags_one_line` | **仅在 `system_preset=custom` 时生效**。`tags_one_line` = 规整成一行逗号标签；`raw` = 原样写模型输出。6 套内置预设各自带 `raw`，所以选预设时不用手动改这里 |
 | `max_new_tokens` | `256` | 标签很短，给 1024 只会让偶尔跑飞的那几张白等到底 |
 | `temperature` | `0.2` | 打标要稳。设 `0` 走贪心解码，同一批图两次跑结果完全一致 |
 | `seed` | `42` | 每张图的种子是 `seed + 序号`，各图不共享采样轨迹 |
@@ -374,23 +379,62 @@ E:\datasets\mydata\
 | `limit` | `0` | 只处理前 N 张（0 = 不限）。先小批量试跑很方便 |
 | `dry_run` | `False` | 只列清单，不加载模型、不写文件 |
 | `keep_model_loaded` / `unload_other_models` | `False` / `True` | 与扩写节点同义 |
+| `bilingual` | `off` | `en_then_zh` = 每张跑两次：英文写 `图名.txt`、中文写 `图名_zh.txt`。默认 `off`，不加倍耗时 |
+| `max_output_chars` | `0` | 输出字符数上限（0 = 不限）。超出时优先退到句末标点，避免切在半句话里 |
 
-### 三套训练场景预设（`system_preset`）
+> 后两个控件是**追加在最末尾**的。旧工作流（`widgets_values` 少这两项）载入时会自动用
+> 默认值补齐，不需要手工改 JSON。
 
-不同训练场景该标的标签体系差别很大 —— 真人写实要摄影术语，二次元要 booru 属性，
-场景概念图要建筑与光照词。混用等于往数据集里灌噪声，所以内置三套，用
-`system_preset` 下拉一键切换；选 `custom` 才用下面那个可编辑的 `system_prompt`。
+### 六套训练场景预设（`system_preset`）
 
-| 预设 | 适用 | 标签体系侧重 |
+不同训练场景要描述的内容差别很大 —— 真人写实看外貌衣着、二次元角色看设定与动作、
+场景概念图看地理与建筑。所以内置 **3 主题 × 中英 2 语言 = 6 套**，用 `system_preset`
+下拉一键切换；选 `custom` 才用下面那个可编辑的 `system_prompt`。
+
+| 预设 | 主题 | 输出语言 |
 |---|---|---|
-| `photoreal` | 写实照片 / 人像写真 | 摄影术语：`85mm`、`shallow_depth_of_field`、`rim_light`、`golden_hour`、`film_grain`、`kodak_portra` |
-| `character` | 二次元角色 / 画师插画 | booru 属性：`twintails`、`serafuku`、`ahoge`、`cel_shading`、`thick_outlines`，并**明确禁止**输出角色名 / 作品名 / 画师名 |
-| `scene` | 场景 / 背景 / 概念图 | 建筑与光照：`vanishing_point`、`god_rays`、`matte_painting`、`cyberpunk_city`、`aerial_view` |
-| `custom` | 自定义 | 用节点上 `system_prompt` 里那段文本（默认是下面那套通用 danbooru 版） |
+| `photoreal` / `photoreal_zh` | 写实照片、人像写真 | 英文 / 中文 |
+| `character` / `character_zh` | 二次元角色、画师插画 | 英文 / 中文 |
+| `scene` / `scene_zh` | 场景、环境、概念图 | 英文 / 中文 |
+| `custom` | 自定义（用节点上的 `system_prompt`） | — |
 
-三套共同的三条硬规则：**只标看得见的**（不猜人名 / 作品名 / 画师名 / 真实地点）、
-**不出质量词与评分**（`masterpiece`、`best_quality`、`absurdres`）、
-**一行逗号标签、小写下划线**。差别只在标签域的顺序与宁缺毋滥的边界。
+三套主题共用同一套规则，**这三条就是本轮改造的重点**：
+
+1. **只写内容，不写风格。** 明确禁掉风格 / 技法 / 质量 / 构图 / 打光类词 ——
+   `anime`、`photorealistic`、`cinematic`、`watercolour`、`matte painting`、
+   `rule of thirds`、`rim light`、`masterpiece`、`8k` 等一律不出现。数据集里这些词
+   互相冲突，而且下游模型本来就会自己学风格，写进去只添噪声。
+2. **一律现代自然语言，不是逗号标签堆。** 输出是 1~3 句连贯短描述（约 30~80 字），
+   大致按「主体 → 外观 → 衣着 → 动作 → 环境 → 光照/时间」组织。
+3. **NSFW 内容不排除、如实描述。** 不因尺度回避，也不含糊其辞。
+
+各套的完整提示词见下面的 JSON，可自己改。
+
+#### 中英双语同时输出（`bilingual`）
+
+`system_preset` 决定**主题**，`bilingual` 决定**要不要两种语言都出**：
+
+| `bilingual` | 行为 |
+|---|---|
+| `off`（默认） | 只按预设那一种语言写一份 txt，零额外耗时 |
+| `en_then_zh` | 每张图跑两次：英文写 `图名.txt`、中文写 `图名_zh.txt` |
+
+- 主题由预设的 `group` 决定 —— 选 `photoreal` 还是 `photoreal_zh`，双语结果完全一样。
+- 中英两份提示词由**同一主题**自动配对，切语言只是换一段系统提示词。
+- `custom` 只有你手写的那一份，推不出另一种语言，所以双语会**退化回单份**并在报告里说明原因。
+- 跳过判断**按语言各自进行**：英文已有、中文还缺时只补中文，不覆盖已写好的英文。
+- 耗时约翻倍（每张两次前向，串行跑），显存不变。
+
+#### 输出字符数上限（`max_output_chars`）
+
+自然语言描述偶尔会啰嗦，而下游训练常有 caption 长度预算。`max_output_chars`
+给一个**按字符数**的硬上限（默认 `0` = 不限）：
+
+- **为什么不用 `max_new_tokens`**：中英文的 token / 字符比差很多，同一个 token 上限
+  对中文太松、对英文太紧，控不住实际长度。
+- 超限时**优先退到句末标点**（`。！？.`）并保留标点，不切在半句话里；退得太狠
+  （不足上限 40%）再退到分句标点（`，、；`）并丢掉悬空标点；都不行才硬切。
+- 被截断的条数会在报告里单列一行（`按上限截断: N 条`）。
 
 #### 提示词存在哪、怎么改
 
@@ -400,37 +444,62 @@ E:\datasets\mydata\
 ComfyUI-Qwen35-Enhancer/presets/tagging_system_prompts.json
 ```
 
-首次加载节点时会自动生成（内容即上面三套）。直接编辑里面的 `prompt` 文本即可，
+首次加载节点时会自动生成（内容即上面六套）。直接编辑里面的 `prompt` 文本即可，
 **改完保存、下一次执行就生效，不需要重启 ComfyUI**。
 
 ```json
 {
+  "_readme": "…（文件里自带的使用说明，别删）",
+  "_version": 2,
   "presets": {
-    "photoreal": { "label": "realistic / photograph", "prompt": "You are an image tagging model ..." },
-    "character": { "label": "anime character / artist style", "prompt": "..." },
-    "scene":     { "label": "scene / concept art", "prompt": "..." }
+    "photoreal": {
+      "label": "写实照片（English）",
+      "lang": "en",
+      "group": "photoreal",
+      "format": "raw",
+      "prompt": "Describe what is in the image in 1~3 plain sentences …"
+    },
+    "photoreal_zh": {
+      "label": "写实照片（中文）",
+      "lang": "zh",
+      "group": "photoreal",
+      "format": "raw",
+      "prompt": "用中文描述这张图片里有什么 …"
+    }
   }
 }
 ```
 
-- `label` 只是给人看的名字（日志和报告里会显示）；下拉里用的是 key（`photoreal` 等）。
-- 想**加一套**：在 `presets` 里加一个 key 就行，简写 `"mystyle": "整段提示词"` 也认。
+字段含义：
+
+| 字段 | 作用 |
+|---|---|
+| `label` | 只给人看的名字，日志与报告里显示；下拉里用的是 key（`photoreal` 等） |
+| `lang` | `en` / `zh`，决定这份写给谁读；`bilingual` 靠它选该出哪一份 |
+| `group` | 把中英两份**配成一对**。双语时找同 `group` 的另一份；改主题只看 `group`，不看 key |
+| `format` | `raw` / `tags_one_line`。选了这个预设就用它声明的格式，不用管节点上的 `output_format` |
+| `prompt` | 系统提示词正文 |
+
+- 想**加一套**：在 `presets` 里加一个 key 就行，简写 `"mystyle": "整段提示词"` 也认
+  （此时 `lang=en`、`group=mystyle`、`format=raw`）。要参与双语，就把中英两份设成同一个 `group`。
   **新增 / 改名 / 删除预设需要重载节点**（重启 ComfyUI）才会出现在下拉里 —— 这是
   ComfyUI 下拉列表在加载时就固定了的限制；只改文本不必重启。
 - `custom` 是保留名，写进 JSON 会被忽略。
-- JSON 写坏了不会拖垮节点：自动回退到内置三套，并在日志里报错。
+- JSON 写坏了不会拖垮节点：自动回退到内置六套，并在日志里报错。
+- `_version` 用来提示结构升级：若你手上的 JSON 版本比代码旧（例如缺 `lang` / `group`），
+  日志会**提醒一次**但**不会**自动覆盖你的文件 —— 里面有你手改的内容，是否升级交给你决定。
 
-> 选了预设时 `system_prompt` 是被**忽略**的。这样即使 widget 里留着上次改到一半的
-> 旧文本，也不会把预设悄悄顶掉。
+> 选了预设时 `system_prompt` 与 `output_format` 都会被**忽略**。这样即使 widget 里
+> 留着上次改到一半的旧值，也不会把预设悄悄顶掉。
 
-### 默认系统提示词（`custom` 模式），以及怎么换成自然语言描述
+### 默认系统提示词（`custom` 模式）
 
-`system_preset=custom` 时用的是这一套。它要的是 **danbooru 风格一行逗号标签**
-（`1girl, solo, long_hair, ...`），
-顺序固定为：主体数量 → 主体 → 外观 → 衣着 → 姿态/视角 → 背景 → 光照/风格，
-并明确禁止质量词与 `<lora:...>`。
+`system_preset=custom` 时用的是这一套，它要的是 **danbooru 风格一行逗号标签**
+（`1girl, solo, long_hair, ...`），顺序固定为：主体数量 → 主体 → 外观 → 衣着 →
+姿态/视角 → 背景 → 光照/风格，并明确禁止质量词与 `<lora:...>`。作为备用的标签风格基线保留。
 
-要改成**自然语言描述**，把 `system_prompt` 整个换掉，并把 `output_format` 切成 `raw`：
+**想要自然语言描述，不必手写提示词 —— 从上面六套预设里挑一套即可**（它们已经各自带了
+`format=raw`）。若坚持自定义，就把 `system_prompt` 整个换掉，并把 `output_format` 切成 `raw`：
 
 ```
 Describe the image in 2~4 English sentences for LoRA training captions.
@@ -459,10 +528,10 @@ Output the caption only — no tags, no bullet points, no preamble.
 
 ### 日志长什么样
 
-逐张一行（带标签数 / token / 耗时 / prefill 与解码分解），末尾给汇总与失败清单：
+逐张一行（带标签数 / token / 字符数 / 耗时 / prefill 与解码分解），末尾给汇总与失败清单：
 
 ```
-[Qwen35] [ 1/24] ✓ im01.png -> 21 标签 / 58 tok / 3.4s（prefill 0.42s、解码 2.9s = 19.8 tok/s）
+[Qwen35] [ 1/24] ✓ im01.png -> 21 标签 / 58 tok / 96 字符 / 3.4s（prefill 0.42s、解码 2.9s = 19.8 tok/s）
 [Qwen35] [ 2/24] ✗ im02.png -> UnidentifiedImageError: cannot identify image file
 ```
 
@@ -476,9 +545,24 @@ Output the caption only — no tags, no bullet points, no preamble.
      - im02.png：UnidentifiedImageError: cannot identify image file
 ```
 
-失败**只算这一张**：原图不动、已有 txt 不动、剩下几张继续。
-但你在前端点「取消」时会立刻中止整批：已写好的 txt 保留、进度条收尾、模型按
-`keep_model_loaded` 释放。这与「单张失败容错」是两套不同语义，不要混。
+开了双语（`bilingual=en_then_zh`）或字符上限（`max_output_chars>0`）时，会多出对应信息：
+
+```
+[Qwen35] [ 1/24] ✓ im01.png [英文] -> 1 片段 / 34 tok / 78 字符 / 2.1s …
+[Qwen35] [ 1/24] ✓ im01.png [中文] -> 1 片段 / 40 tok / 62 字符 / 2.3s（已按上限截断）
+[Qwen35] ========== 打标汇总 ==========
+  生成次数    : 26 次（13 张 × 2 语言；以下按「次」计）
+  成功 / 失败 : 26 / 0
+  片段合计    : 26 个（平均 1.0 个/次）
+  按上限截断  : 4 条（max_output_chars=80）
+  ⚠ 失败清单（1 张；原图与已有 txt 均未被改动）:        ← 双语时条目带语种
+     - im07.png [中文]：输出为空（…）
+```
+
+失败**只算这一张**：原图不动、已有 txt 不动、剩下几张继续。双语时同一张的另一种语言
+照跑，不会因为英文失败就丢掉中文那份。但你在前端点「取消」时会立刻中止整批：已写好的
+txt 保留、进度条收尾、模型按 `keep_model_loaded` 释放。这与「单张失败容错」是两套不同
+语义，不要混。
 
 ## 显存、耗时与优化
 

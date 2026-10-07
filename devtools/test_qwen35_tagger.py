@@ -303,12 +303,14 @@ order = list(it["required"]) + list(it["optional"])
 print("  widgets 顺序:")
 for _i, _k in enumerate(order):
     print(f"    [{_i:>2}] {_k}")
-check("widgets 总数 = 25", len(order) == 25, str(len(order)))
+check("widgets 总数 = 27", len(order) == 27, str(len(order)))
 
 sig = [p for p in inspect.signature(NODE.tag_folder).parameters.keys()
        if p not in ("self", "unique_id")]
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
+check("两个新控件**追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
+      order[-2:] == ["bilingual", "max_output_chars"], str(order[-2:]))
 
 check("folder_path 不是多行框（路径不该用多行输入）",
       it["required"]["folder_path"][1].get("multiline") is False)
@@ -317,10 +319,20 @@ check("system_preset 排在 system_prompt 之前（先选预设再编辑）",
 check("system_preset 默认 custom（不改变旧工作流行为）",
       it["required"]["system_preset"][1]["default"] == "custom",
       str(it["required"]["system_preset"][1]["default"]))
-check("system_preset 选项：custom 排第一，且带三套预设",
-      list(it["required"]["system_preset"][0])[:1] == ["custom"]
-      and {"photoreal", "character", "scene"} <= set(it["required"]["system_preset"][0]),
-      str(list(it["required"]["system_preset"][0])))
+_pc = list(it["required"]["system_preset"][0])
+check("system_preset 选项：custom 排第一，且 3 主题 × 中英共 6 套齐全",
+      _pc[:1] == ["custom"]
+      and set(_pc[1:]) == {"photoreal", "photoreal_zh", "character", "character_zh",
+                           "scene", "scene_zh"},
+      str(_pc))
+check("bilingual 取值与扩写节点一致（off / en_then_zh）",
+      list(it["optional"]["bilingual"][0]) == ["off", "en_then_zh"],
+      str(list(it["optional"]["bilingual"][0])))
+check("bilingual 默认 off（默认不加倍耗时）",
+      it["optional"]["bilingual"][1]["default"] == "off")
+check("max_output_chars 默认 0 = 不限（行为与以前一致）",
+      it["optional"]["max_output_chars"][1]["default"] == 0,
+      str(it["optional"]["max_output_chars"][1]["default"]))
 check("system_prompt 是多行框", it["required"]["system_prompt"][1]["multiline"] is True)
 check("system_prompt 默认是打标提示词而不是 H3 那套",
       "danbooru" in it["required"]["system_prompt"][1]["default"]
@@ -779,44 +791,71 @@ check("预设 JSON 落在本节点目录下（presets/ 子目录）",
 check("预设 JSON 已经生成出来（前面 INPUT_TYPES 触发过）", os.path.isfile(_PJ), _PJ)
 
 _presets = QM._load_tag_presets()
-check("默认带三套预设", set(_presets) >= {"photoreal", "character", "scene"},
+check("默认带 6 套预设（3 主题 × 中英）",
+      set(_presets) == {"photoreal", "photoreal_zh", "character", "character_zh",
+                        "scene", "scene_zh"},
       str(list(_presets)))
-check("每套都有 label 与 prompt",
-      all(p.get("label") and p.get("prompt") for p in _presets.values()))
+check("每套都有 label / prompt / lang / group / format",
+      all(p.get("label") and p.get("prompt") and p.get("lang")
+          and p.get("group") and p.get("format") for p in _presets.values()))
+check("每套 format 都是 raw（自然语言描述不该被逗号规整破坏）",
+      all(p["format"] == "raw" for p in _presets.values()),
+      str({k: v["format"] for k, v in _presets.items()}))
 
-check("写实套含摄影术语（film_grain / 85mm）",
-      "film_grain" in _presets["photoreal"]["prompt"]
-      and "85mm" in _presets["photoreal"]["prompt"])
-check("角色套含 booru 属性（twintails / serafuku）",
-      "twintails" in _presets["character"]["prompt"]
-      and "serafuku" in _presets["character"]["prompt"])
-check("场景套含建筑与光照词（vanishing_point / god_rays）",
-      "vanishing_point" in _presets["scene"]["prompt"]
-      and "god_rays" in _presets["scene"]["prompt"])
-check("三套互不相同（不是同一份文本换名）",
-      len({p["prompt"] for p in _presets.values()}) == 3)
+# ---- 三条新要求：只写内容 / 自然语言 / 不回避 NSFW ----
 for _n, _p in _presets.items():
-    check(f"{_n} 套都写了共同硬规则：只标可见 / 列了禁词 / 一行逗号",
-          "clearly visible" in _p["prompt"]
-          and "masterpiece" in _p["prompt"]
-          and "comma-separated" in _p["prompt"])
+    _t = _p["prompt"]
+    _zh = _p["lang"] == "zh"
+    check(f"{_n} 明令禁止风格 / 媒介 / 技法 / 画质词",
+          ("不要出现风格、媒介、技法、画质类的词" in _t) if _zh
+          else ("Do NOT use style, medium, technique or quality" in _t))
+    check(f"{_n} 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）",
+          ("赛璐璐上色" in _t) if _zh else ("cel shading" in _t))
+    check(f"{_n} 明确要求写自然语言句子、不许写标签串",
+          ("不要写成逗号分隔的标签串" in _t) if _zh
+          else ("Do NOT write a comma-separated tag list" in _t))
+    check(f"{_n} 写明 NSFW 不回避、如实描述",
+          ("NSFW 属于正常范围" in _t) if _zh else ("NSFW IS IN SCOPE" in _t))
+    check(f"{_n} 保留「只写看得见的、不编造」硬规则",
+          ("不要编造" in _t) if _zh else ("Never invent" in _t))
+    check(f"{_n} 指定了输出语言",
+          ("用中文写这段描述。" in _t) if _zh
+          else ("Write the description in English." in _t))
+
+check("六套互不相同（不是同一份文本换名）",
+      len({p["prompt"] for p in _presets.values()}) == 6)
+check("同主题的中英两份共用 group（双语配对全靠它）",
+      _presets["photoreal"]["group"] == _presets["photoreal_zh"]["group"] == "photoreal"
+      and _presets["scene"]["group"] == _presets["scene_zh"]["group"] == "scene")
+check("中英两份的 lang 标对了",
+      _presets["character"]["lang"] == "en" and _presets["character_zh"]["lang"] == "zh")
+check("旧标签体系的脚手架已完全移除（不再列举 1girl / Tag order 那套）",
+      not any(("Tag order (keep this order" in p["prompt"])
+              or ("comma-separated tags. All lowercase" in p["prompt"])
+              or ("1girl," in p["prompt"])
+              for p in _presets.values()))
 
 # ---- 选择逻辑 ----
-_t, _k, _l = QM._resolve_tag_preset("photoreal", "SYS")
+_rec, _k = QM._resolve_tag_preset("photoreal", "SYS")
 check("选预设时忽略 system_prompt（防止被忘改的旧 widget 值顶掉）",
-      _t == _presets["photoreal"]["prompt"] and _k == "photoreal")
-check("同时返回显示名（报告里要显示选了哪套）", _l == _presets["photoreal"]["label"], str(_l))
-_t, _k, _l = QM._resolve_tag_preset("custom", "SYS")
-check("custom 用 widget 里填的文本", _t == "SYS" and _k == "custom")
-_t, _k, _l = QM._resolve_tag_preset("没这个预设", "SYS")
+      _rec["prompt"] == _presets["photoreal"]["prompt"] and _k == "photoreal")
+check("返回的记录带 label（报告里要显示选了哪套）",
+      _rec["label"] == _presets["photoreal"]["label"], str(_rec.get("label")))
+check("返回的记录带 lang / group / format（双语编排与格式联动要用）",
+      _rec["lang"] == "en" and _rec["group"] == "photoreal" and _rec["format"] == "raw")
+_rec, _k = QM._resolve_tag_preset("custom", "SYS")
+check("custom 用 widget 里填的文本", _rec["prompt"] == "SYS" and _k == "custom")
+check("custom 的 format 是 None（含义：格式交给 output_format 控件）",
+      _rec["format"] is None, str(_rec.get("format")))
+_rec, _k = QM._resolve_tag_preset("没这个预设", "SYS")
 check("认不出的预设名回退 custom（预设被删/改名时老工作流不至于拿不到提示词）",
-      _t == "SYS" and _k == "custom")
-_t, _k, _l = QM._resolve_tag_preset("PHOTOREAL", "SYS")
+      _rec["prompt"] == "SYS" and _k == "custom")
+_rec, _k = QM._resolve_tag_preset("PHOTOREAL", "SYS")
 check("预设名大小写不敏感（手改 JSON 常见）", _k == "photoreal")
-_t, _k, _l = QM._resolve_tag_preset("", "SYS")
-check("空 preset 视为 custom", _t == "SYS" and _k == "custom")
-_t, _k, _l = QM._resolve_tag_preset(None, "SYS")
-check("None preset 也视为 custom", _t == "SYS" and _k == "custom")
+_rec, _k = QM._resolve_tag_preset("", "SYS")
+check("空 preset 视为 custom", _rec["prompt"] == "SYS" and _k == "custom")
+_rec, _k = QM._resolve_tag_preset(None, "SYS")
+check("None preset 也视为 custom", _rec["prompt"] == "SYS" and _k == "custom")
 
 # ---- payload 解析容错 ----
 _p = QM._parse_preset_payload({"presets": {
@@ -827,6 +866,18 @@ _p = QM._parse_preset_payload({"presets": {
 check("custom 是保留名，JSON 里写它会被忽略（否则下拉语义会乱）",
       "custom" not in _p and set(_p) == {"a", "b"}, str(list(_p)))
 check("简写形式（key 直接给字符串）也认", _p["b"]["prompt"] == "BBB" and _p["b"]["label"] == "b")
+check("新字段缺省时有兜底：lang=en / group=key / format=raw",
+      _p["a"]["lang"] == "en" and _p["a"]["group"] == "a" and _p["a"]["format"] == "raw",
+      str(_p["a"]))
+check("lang 只认 en/zh，乱填回退 en",
+      QM._parse_preset_payload(
+          {"presets": {"x": {"prompt": "P", "lang": "jp"}}})["x"]["lang"] == "en")
+check("format 只认 raw/tags_one_line，乱填回退 raw",
+      QM._parse_preset_payload(
+          {"presets": {"x": {"prompt": "P", "format": "??"}}})["x"]["format"] == "raw")
+check("group 显式给了就用给的（中英配对靠它）",
+      QM._parse_preset_payload(
+          {"presets": {"x": {"prompt": "P", "group": "g"}}})["x"]["group"] == "g")
 check("空 prompt 的条目被跳过（不然下拉里会多个空选项）",
       set(QM._parse_preset_payload({"presets": {
           "z": {"prompt": "   "}, "y": {"prompt": "Y"}}})) == {"y"})
@@ -850,8 +901,9 @@ try:
         f.write("{ 这不是合法的 json ")
     QM._TAG_PRESET_CACHE["mtime"] = None
     _bad = QM._load_tag_presets(force=True)
-    check("JSON 坏掉：回退内置三套而不是抛异常",
-          set(_bad) >= {"photoreal", "character", "scene"}, str(list(_bad)))
+    check("JSON 坏掉：回退内置六套而不是抛异常",
+          set(_bad) >= {"photoreal", "photoreal_zh", "character", "scene_zh"},
+          str(list(_bad)))
     check("JSON 坏掉：日志里明确报了解析失败",
           "解析失败" in logs_since(n0), logs_since(n0)[-80:])
     check("JSON 坏掉：坏内容没被缓存住（下次还会重试读盘）",
@@ -872,15 +924,15 @@ try:
         json.dump(_doc, f, ensure_ascii=False, indent=2)
     _now = time.time() + 3
     os.utime(_PJ, (_now, _now))          # 确保 mtime 一定变化
-    _t, _k, _ = QM._resolve_tag_preset("scene", "")
+    _rec, _k = QM._resolve_tag_preset("scene", "")
     check("改了 JSON 文本后无需重启即生效（按 mtime 热重载）",
-          _t == "HOT-RELOAD-OK" and _k == "scene", _t[:40])
+          _rec["prompt"] == "HOT-RELOAD-OK" and _k == "scene", _rec["prompt"][:40])
 finally:
     shutil.copy2(_hot, _PJ)
     os.remove(_hot)
     QM._TAG_PRESET_CACHE["mtime"] = None
-    _t, _k, _ = QM._resolve_tag_preset("scene", "")
-    check("恢复原文件后重新读回内置文本", _t == _presets["scene"]["prompt"])
+    _rec, _k = QM._resolve_tag_preset("scene", "")
+    check("恢复原文件后重新读回内置文本", _rec["prompt"] == _presets["scene"]["prompt"])
 
 # ---- 报告里要写清用了哪套 ----
 _h2 = Harness()
@@ -893,6 +945,179 @@ try:
           "（custom" in _r["result"][0])
 finally:
     _h2.close()
+
+# ===========================================================================
+section("I) 双语同时输出 / 输出字符上限 / 格式联动")
+# ===========================================================================
+
+check("_lang_word 认 en / zh / 空 / 其他",
+      QM._lang_word("en") == "英文" and QM._lang_word("zh") == "中文"
+      and QM._lang_word("") == "预设" and QM._lang_word(None) == "预设")
+
+# ---- I1 纯函数：_truncate_output ----
+_tc = QM._truncate_output
+check("上限 0 = 不限", _tc("abcdef", 0) == ("abcdef", False))
+check("没超限就原样返回", _tc("abcdef", 6) == ("abcdef", False))
+_o, _c = _tc("一位穿红外套的女性站在窗边。她留着黑色长发，戴着一副眼镜。", 20)
+check("超限时退到句末标点，且**保留**句号", _c and _o.endswith("。"), repr(_o))
+check("截断结果一定不超上限", len(_o) <= 20, str(len(_o)))
+_o, _c = _tc("短发，戴帽子，穿风衣，背双肩包，站在街上", 12)
+check("退不到句末时退到分句，并丢掉悬空的逗号",
+      _c and not _o.endswith("，") and len(_o) <= 12, repr(_o))
+_o, _c = _tc("abcdefghijklmnopqrstuvwxyz", 10)
+check("两头都退不到就硬切（不返回空）", _c and _o and len(_o) <= 10, repr(_o))
+_o, _c = _tc("1girl, solo, long_hair, black_hair, blue_eyes", 28)
+check("标签串模式按逗号退（不会切在半个标签里）",
+      _c and _o.endswith("long_hair"), repr(_o))
+check("英文句点也算句末（英文描述的主要落点）",
+      _tc("A woman stands by the window. She has long hair.", 30)[0]
+      == "A woman stands by the window.")
+
+# ---- I2 纯函数：_tag_runs ----
+_run1, _n1 = QM._tag_runs("photoreal", _presets["photoreal"], False)
+check("单语：只跑一份，后缀空、lang=en",
+      len(_run1) == 1 and _run1[0]["suffix"] == "" and _run1[0]["lang"] == "en")
+check("单语：不产生任何说明（不该有噪声）", _n1 is None, str(_n1))
+_run2, _n2 = QM._tag_runs("photoreal", _presets["photoreal"], True)
+check("双语：跑中英两份，顺序固定 en -> zh",
+      [r["lang"] for r in _run2] == ["en", "zh"], str([r["lang"] for r in _run2]))
+check("双语：英文不带后缀，中文带 _zh",
+      [r["suffix"] for r in _run2] == ["", "_zh"], str([r["suffix"] for r in _run2]))
+check("双语：两份分别是该主题的英文版与中文版提示词",
+      _run2[0]["prompt"] == _presets["photoreal"]["prompt"]
+      and _run2[1]["prompt"] == _presets["photoreal_zh"]["prompt"])
+check("双语能正常配对时不产生说明", _n2 is None, str(_n2))
+_run3, _ = QM._tag_runs("photoreal_zh", _presets["photoreal_zh"], True)
+check("选中文预设 + 双语：结果与选英文预设一样（主题由 group 决定）",
+      [r["suffix"] for r in _run3] == ["", "_zh"])
+_rec_c, _ = QM._resolve_tag_preset("custom", "MY-OWN-PROMPT")
+_run4, _n4 = QM._tag_runs("custom", _rec_c, True)
+check("custom + 双语：退化为单份，并明确说明原因（不能默默只写一份）",
+      len(_run4) == 1 and _n4 and "custom" in _n4, str(_n4))
+_fake_rec = {"prompt": "P", "label": "孤本", "lang": "en",
+             "group": "no_such_group", "format": "raw"}
+_run5, _n5 = QM._tag_runs("lonely", _fake_rec, True)
+check("找不到同 group 的中文对照：退化为单份并说明缺哪种语言",
+      len(_run5) == 1 and _n5 and "中文" in _n5, str(_n5))
+
+# ---- I3 端到端：双语真的写出两个文件 ----
+class _LangAwareModel(FakeModel):
+    """按系统提示词里有没有中文规则，切换成不同语言的回复。"""
+
+    def generate(self, **kw):
+        self.n += 1
+        self.gen_kwargs.append(kw)
+        crit = kw.get("stopping_criteria")
+        if crit:
+            crit[0](input_ids=None)
+        msgs = self.proc.messages_seen[-1] if self.proc.messages_seen else []
+        sys_txt = "".join(str(m.get("content") or "") for m in msgs
+                          if isinstance(m, dict) and m.get("role") == "system")
+        self.proc.reply_text = ("中文描述内容。" if "用中文写这段描述" in sys_txt
+                                else "English caption here.")
+        return torch.tensor([[1, 2, 3] + REPLY_IDS])
+
+
+D12 = os.path.join(TMP_ROOT, "d12")
+make_set(D12, 2)
+h12 = Harness()
+h12.model = _LangAwareModel()
+h12.model.proc = h12.proc
+try:
+    _r12 = h12.run(D12, system_preset="photoreal", bilingual="en_then_zh")
+    check("双语：返回的是写出的文件数（2 张 × 2 语言 = 4）",
+          _r12["result"][1] == 4, str(_r12["result"][1]))
+    check("双语：模型被调用 4 次（每张两次）", h12.model.n == 4, str(h12.model.n))
+    _en = os.path.join(D12, "im01.txt")
+    _zh = os.path.join(D12, "im01_zh.txt")
+    check("双语：英文写 im01.txt、中文写 im01_zh.txt",
+          os.path.isfile(_en) and os.path.isfile(_zh),
+          f"en={os.path.isfile(_en)} zh={os.path.isfile(_zh)}")
+    check("双语：两份内容确实是各自语言的输出",
+          open(_en, encoding="utf-8").read().strip() == "English caption here."
+          and open(_zh, encoding="utf-8").read().strip() == "中文描述内容。",
+          repr(open(_zh, encoding="utf-8").read()[:40]))
+    check("双语：报告里写明两种语言与后缀",
+          "英文" in _r12["result"][0] and "中文" in _r12["result"][0]
+          and "_zh" in _r12["result"][0])
+    check("双语：报告里有「生成次数」一行", "生成次数" in _r12["result"][0])
+finally:
+    h12.close()
+
+# ---- I4 端到端：输出字符上限 ----
+D13 = os.path.join(TMP_ROOT, "d13")
+make_set(D13, 1)
+_LONG = "一位穿红外套的女性站在窗边。她留着黑色长发，戴着一副眼镜。背景是白色的墙。"
+h13 = Harness(raw_reply=_LONG)
+try:
+    _r13 = h13.run(D13, system_preset="photoreal", max_output_chars=20)
+    _txt13 = open(os.path.join(D13, "im01.txt"), encoding="utf-8").read()
+    check("字符上限：写出的 txt 不超上限", len(_txt13) <= 20, f"{len(_txt13)} 字符")
+    check("字符上限：退到句末标点并保留句号", _txt13.endswith("。"), repr(_txt13))
+    check("字符上限：报告里出现「按上限截断」", "按上限截断" in _r13["result"][0])
+    check("字符上限：汇总里报告了截断条数", "按上限截断  :" in _r13["result"][0])
+    _r13b = h13.run(D13, system_preset="photoreal", max_output_chars=0,
+                    overwrite="overwrite")
+    _txt13b = open(os.path.join(D13, "im01.txt"), encoding="utf-8").read()
+    check("上限 0：完整写入，不做任何截断",
+          _txt13b.strip() == _LONG and "按上限截断  :" not in _r13b["result"][0],
+          f"{len(_txt13b)} 字符")
+finally:
+    h13.close()
+
+# ---- I5 格式联动：预设决定 format，custom 才看 output_format 控件 ----
+D14 = os.path.join(TMP_ROOT, "d14")
+make_set(D14, 1)
+h14 = Harness(raw_reply="first part,\nsecond part")
+try:
+    h14.run(D14, system_preset="photoreal")
+    check("选了预设：按预设声明的 raw 原样写（换行保留，不被逗号规整）",
+          "\n" in open(os.path.join(D14, "im01.txt"), encoding="utf-8").read())
+    h14.run(D14, system_preset="custom", system_prompt="SYS", overwrite="overwrite")
+    _t14 = open(os.path.join(D14, "im01.txt"), encoding="utf-8").read()
+    check("custom：output_format 控件仍然生效（默认 tags_one_line 把换行拍平成逗号）",
+          "\n" not in _t14 and "first part, second part" in _t14, repr(_t14[:60]))
+finally:
+    h14.close()
+
+# ---- I6 双语 + skip：已有的一半不覆盖、只补缺的那半 ----
+D15 = os.path.join(TMP_ROOT, "d15")
+make_set(D15, 2)
+with open(os.path.join(D15, "im01.txt"), "w", encoding="utf-8") as _f:
+    _f.write("OLD-EN")
+h15 = Harness(raw_reply="NEW")
+try:
+    _r15 = h15.run(D15, system_preset="photoreal", bilingual="en_then_zh")
+    check("双语 + skip：英文已有的那张只补中文（2×2 - 1 = 3 次生成）",
+          h15.model.n == 3, str(h15.model.n))
+    check("双语 + skip：已有的英文 txt 未被覆盖",
+          open(os.path.join(D15, "im01.txt"), encoding="utf-8").read() == "OLD-EN")
+    check("双语 + skip：对应中文那份补上了",
+          os.path.isfile(os.path.join(D15, "im01_zh.txt")))
+    check("双语 + skip：另一张两种语言都写了",
+          os.path.isfile(os.path.join(D15, "im02.txt"))
+          and os.path.isfile(os.path.join(D15, "im02_zh.txt")))
+    check("双语 + skip：返回文件数 3（补 1 中文 + 新 2 张 ×2）",
+          _r15["result"][1] == 3, str(_r15["result"][1]))
+finally:
+    h15.close()
+
+# ---- I7 dry_run 清单要两种语言都列出来 ----
+h16 = Harness()
+try:
+    _r16 = h16.run(D15, system_preset="photoreal", bilingual="en_then_zh",
+                   dry_run=True, overwrite="overwrite")
+    _rep16 = _r16["result"][0]
+    check("dry_run 双语：清单里同时列出 .txt 与 _zh.txt",
+          "im02.txt" in _rep16 and "im02_zh.txt" in _rep16)
+    check("dry_run 双语：清单里标了语言", "[英文]" in _rep16 and "[中文]" in _rep16)
+    check("dry_run：不加载模型", h16.loads == 0, str(h16.loads))
+finally:
+    h16.close()
+
+check("custom + dry_run：报告里说明双语开关为何无效",
+      "custom" in Harness().run(D15, system_preset="custom", system_prompt="SYS",
+                                bilingual="en_then_zh", dry_run=True)["result"][0])
 
 # ---- 收尾 ----
 print()

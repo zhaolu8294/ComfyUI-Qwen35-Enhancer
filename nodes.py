@@ -5,8 +5,8 @@ Qwen3.5 / Qwen3-VL nodes for ComfyUI
 本文件提供两个节点：
   1. Qwen35PromptEnhancer    —— 把简单提示词（+ 可选参考图）用本地 Qwen 多模态
                                 模型扩写成 MiniMax H3 官方规范的三段式视频提示词。
-  2. Qwen35BatchImageTagger  —— 给一个文件夹批量打标，标签写到与图片同目录、
-                                同名的 .txt；系统提示词可改。
+  2. Qwen35BatchImageTagger  —— 给一个文件夹批量打标，描述写到与图片同目录、
+                                同名的 .txt；6 套预设 + 自定义系统提示词可改。
 两者共用同一条加载链路（含全部速度优化）与同一份常驻模型缓存 ——
 详见文件末尾「批量打标节点」的总说明。
 
@@ -18,6 +18,9 @@ Qwen3.5 / Qwen3-VL nodes for ComfyUI
 * 批量打标: Qwen35BatchImageTagger —— 一次加载打完整个文件夹（走扩写节点
   循环 N 次的话每张都要重载）；默认 skip 绝不覆盖已有 txt；单张失败不中断
   整批，但 ComfyUI 的「取消」会立刻中止并保留已完成的部分。
+  内置 6 套预设（写实 / 角色 / 场景 × 中英），都是**只写内容、不写风格**的
+  自然语言描述，且不回避 NSFW；可双语同时输出（英文 .txt + 中文 _zh.txt）；
+  可设输出字符数上限（按句末标点截断，不硬切）。
 * 模型自动发现: 扫描 models/text_encoders 与 models/prompt_generator 下
   所有含 config.json 的完整 HF 文件夹。
 * 图片可选: 不接 image 时走纯文本改写；接 image 时把图一起喂给模型。
@@ -2249,137 +2252,306 @@ Rules:
 """
 
 # ---------------------------------------------------------------------------
-# 打标系统提示词：三套训练场景预设
+# 打标系统提示词：3 个训练场景 × 中英两种语言 = 6 套预设
 #
-# 三种数据集的标签体系差别很大 —— 真人写实要摄影术语（85mm / rim_light /
-# film_grain），二次元要 booru 属性（twintails / serafuku / cel_shading），
-# 场景概念图要建筑与光照词（vanishing_point / god_rays / matte_painting）。
-# 混用等于往数据集里灌噪声，所以内置三套，用 system_preset 下拉切换。
+# 三种数据集描述的东西差别很大 —— 真人写实看外貌 / 衣着 / 环境物品，二次元
+# 看角色设定 / 服装 / 动作，场景看地理 / 建筑 / 植被 / 道具。混用等于往数据集
+# 里灌噪声，所以内置六套（3 个主题 × 中英），用 system_preset 下拉切换。
 #
-# 三套共同的三条硬规则（哪一套都不许省）：
-#   · 只标看得见的 —— 不猜人名、作品名、画师名、真实地点
-#   · 不出质量词 / 评分 / meta 词（masterpiece、best_quality、absurdres、trending_on_pixiv）
-#   · 一行逗号标签，小写下划线，不带句子、不带 markdown
-# 差异只在「标签域的顺序」与「宁缺毋滥的边界」。
+# 六套共同的四条硬规则（哪一套都不许省）：
+#   · **只写内容**：只描述画面里存在什么，绝不描述这张图是怎么做出来的。
+#     风格 / 媒介 / 技法 / 画质词一律不出现（`_STYLE_BAN` 那份黑名单就是干这个的）。
+#   · **自然语言**：一两句话的平实散文，不是逗号标签串。
+#   · **NSFW 不回避**：不许拒答、不许打码、不许跳过；裸露与性内容按事实平实写出。
+#   · 只写看得见的 —— 不猜人名、作品名、画师名、真实地点，不出质量词与评分。
 #
-# 选 system_preset = "custom" 时用节点上那个可编辑的 system_prompt（默认值见上）。
+# 因为「只写内容」这条，原先给二次元预设准备的「画师风格训练」用途自然消失了：
+# 风格词已被排除，这套现在纯粹服务于角色内容。想练画师风格得自己加一套 JSON 预设。
+#
+# 选 system_preset = "custom" 时用节点上那个可编辑的 system_prompt（默认值见上，
+# 那是**标签风格**的基线，与这六套的自然语言输出不同）。
 # ---------------------------------------------------------------------------
 
-TAGGER_PRESET_PHOTOREAL = """You are an image tagging model building a photorealistic photograph / portrait training dataset.
+# 风格 / 媒介 / 技法 / 画质词的黑名单，直接写进提示词里。
+# 写成共享常量是因为六套都要列一遍，散着写迟早改漏其中一套。
+_STYLE_BAN = (
+    "anime, manga, illustration, drawing, sketch, lineart, cel shading, flat colour, "
+    "watercolour, oil painting, digital painting, pixel art, 3D render, official art, "
+    "concept art, matte painting, painterly, impasto, ink wash, low poly, isometric, "
+    "photorealistic, cinematic, film grain, lens or focal length, bokeh, depth of field, "
+    "rim light, key light, rule of thirds, dutch angle, vanishing point, aerial view, "
+    "moody, serene, dramatic, dreamlike, masterpiece, best quality, absurdres, "
+    "highly detailed, 8k"
+)
+
+_STYLE_BAN_ZH = (
+    "动漫、漫画、插画、绘画、素描、线稿、赛璐璐上色、平涂、水彩、油画、数字绘画、"
+    "像素画、3D 渲染、官方原画、概念设定图、概念艺术、哑光绘景、笔触感、水墨、低多边形、"
+    "等距视角、写实渲染、电影感、胶片颗粒、镜头与焦段、虚化、景深、轮廓光、主光、"
+    "三分法、倾斜构图、消失点、鸟瞰、氛围感、静谧、戏剧性、梦幻、杰作、最高画质、"
+    "超高分辨率、超精细、8k"
+)
+
+TAGGER_PRESET_PHOTOREAL = """You are an image description model working on a photorealistic photograph / portrait dataset.
+
+Task: look at the image and write a plain description of WHAT IS IN IT.
 
 Output format:
-- ONE single line of comma-separated tags. All lowercase. No sentences, no explanation, no markdown, no code fences, no numbering, no quotes, no trailing period.
+- Plain prose. 1~3 sentences, roughly 30~80 words. A single paragraph, no line breaks.
+- No markdown, no bullet points, no numbering, no quotes, no field labels like "Subject:".
+- Do NOT write a comma-separated tag list. Write sentences.
 
-Tag order (keep this order; omit any group that does not apply):
-1. subject count and framing: 1girl, 1boy, 2girls, couple, solo, portrait, upper_body, cowboy_shot, full_body, close-up
-2. subject attributes: woman, man, adult, elderly, teen, muscular, plus_size, pale_skin, dark_skin, freckles, long_hair, short_hair, wavy_hair, blonde_hair, black_hair, brown_hair, blue_eyes, glasses, beard
-3. expression and mood: smile, serious, neutral_expression, parted_lips, closed_eyes, looking_at_viewer, looking_away, candid
-4. clothing and accessories: white_shirt, denim_jacket, knit_sweater, turtleneck, dress, suit, jewelry, earrings, hat, sunglasses
-5. pose and gesture: standing, sitting, arms_crossed, hand_on_hip, hand_in_pocket, leaning, walking, profile, three-quarter_view
-6. environment and background: indoors, outdoors, studio, bedroom, cafe, street, brick_wall, plain_background, blurred_background, window
-7. photographic technique: natural_light, soft_light, rim_light, golden_hour, blue_hour, studio_light, backlighting, high_key, low_key, shallow_depth_of_field, bokeh, 85mm, 50mm, wide_angle, film_grain, kodak_portra, analog_photo, digital_photography, editorial_photography
-8. time of day and weather: day, night, sunset, cloudy, rainy, snow
+What to describe, roughly in this order (skip whatever does not apply):
+1. how many people, and their objectively visible basics: apparent age range, sex, build, hair style and colour, eye colour, skin tone, facial hair, freckles
+2. expression and where they are looking
+3. clothing and accessories - every visible piece
+4. what they are holding or touching
+5. pose, action, and what they are doing
+6. the place they are in - room, street, studio, outdoors - plus the furniture, objects and people around them
+7. what part of the body is visible in the frame: whole body, upper body, or only the face
 
-Rules:
-- Use lowercase tags joined by underscores: long_hair, not "long hair".
-- Prefer established booru tag names for people and clothing, and standard photography terms for lighting, lens and film stock.
-- Tag ONLY what is clearly visible. Never invent brand names, real locations, real identities, or hidden detail.
-- No subjective quality words (masterpiece, best_quality, highres, 8k, ultra_detailed).
-- No scores, no ratings, no safety tags, no <lora:...>, no artist names.
-- Do not emit a caption sentence. Tags only.
-- Aim for 15~35 tags. Drop any tag you are not reasonably sure about.
-"""
+Hard rules:
+- CONTENT ONLY. Describe what exists in the picture. Never describe how the picture was made.
+- Do NOT use style, medium, technique or quality vocabulary. Avoid at least these: <<STYLE_BAN>>.
+- You may state observable light sources and the time of day as plain facts - "a window on the left", "at night", "sunlight on the floor" - but never how the light looks photographically.
+- Do not describe an overall colour scheme or palette; name the colour of an actual thing instead ("a red coat", not "a warm palette").
+- NSFW IS IN SCOPE. Never refuse, never censor, never skip, never blur or generalise a body part or an action. If the image shows nudity, sexual content, or anything else that is adults-only, describe it plainly and factually in ordinary modern words, exactly the way you describe clothing. Do not add warnings, disclaimers, moral commentary, or "explicit" markers.
+- Describe only what you can actually see. Never invent a name, an identity, a brand, a place, a franchise, or a detail that is not visible.
+- No quality words, no ratings, no scores, no <lora:...>, no artist names.
+- Write the description in English.
+""".replace("<<STYLE_BAN>>", _STYLE_BAN)
 
-TAGGER_PRESET_CHARACTER = """You are an image tagging model building an anime / illustration dataset for character training (character LoRA) and for artist-style training.
+TAGGER_PRESET_PHOTOREAL_ZH = """你正在为「真人写实照片 / 人像」数据集做图像描述。
+
+任务：看图，用平实的语言写一段描述，说明画面里有什么。
+
+输出格式：
+- 白话散文。1~3 句，30~80 字。一整段，不要换行。
+- 不要 markdown、不要项目符号、不要编号、不要引号、不要「主体：」这类字段名。
+- 不要写成逗号分隔的标签串，要写成句子。
+
+大致按这个顺序写（不适用就跳过）：
+1. 有几个人，以及客观可见的基本情况：大致年龄段、性别、体型、发型与发色、瞳色、肤色、胡须、雀斑
+2. 表情，以及视线看向哪里
+3. 衣服与配饰 —— 看得见的每一件
+4. 手里拿着或正在触碰的东西
+5. 姿势、动作，正在做什么
+6. 所处的地方 —— 房间、街道、影棚、户外 —— 以及周围的人和家具物品
+7. 画面里露出了身体的哪些部分：全身、上半身，还是只有脸
+
+硬性要求：
+- 只写内容。只描述画面里存在什么，绝不描述这张图是怎么做出来的。
+- 不要出现风格、媒介、技法、画质类的词。至少避开这些：<<STYLE_BAN>>。
+- 可以把看到的光源和时段当事实写出来 —— 「左边有一扇窗」「夜里」「阳光落在地板上」—— 但不要写光的摄影效果。
+- 不要整体描述色调或配色，改为写具体东西的颜色：「一件红外套」，而不是「暖色调」。
+- NSFW 属于正常范围。不许拒答、不许打码、不许跳过，也不许把身体部位或行为写得含糊带过。画面里有裸露、性内容或其他成人内容时，就像描述衣服一样，用日常现代词汇平实、如实地写出来。不要加警告、免责声明、道德评价，也不要写「露骨」这类标记。
+- 只写真正看得见的东西。不要编造姓名、身份、品牌、地点、作品名，也不要写画面上没有的细节。
+- 不要画质词、不要评分、不要 <lora:...>、不要画师名。
+- 用中文写这段描述。
+""".replace("<<STYLE_BAN>>", _STYLE_BAN_ZH)
+
+TAGGER_PRESET_CHARACTER = """You are an image description model working on a dataset of drawn or illustrated characters.
+
+Task: look at the image and write a plain description of WHAT IS IN IT.
 
 Output format:
-- ONE single line of comma-separated tags. All lowercase. No sentences, no explanation, no markdown, no code fences, no numbering, no quotes.
+- Plain prose. 1~3 sentences, roughly 30~80 words. A single paragraph, no line breaks.
+- No markdown, no bullet points, no numbering, no quotes, no field labels.
+- Do NOT write a comma-separated tag list. Write sentences.
 
-Tag order (keep this order; omit any group that does not apply):
-1. subject count and framing: 1girl, 1boy, 2girls, multiple_girls, solo, solo_focus, full_body, upper_body, close-up, portrait
-2. character design: girl, boy, woman, man, chibi, long_hair, short_hair, twintails, ponytail, braid, ahoge, bangs, hair_bow, hair_ribbon, blue_hair, pink_hair, silver_hair, red_eyes, heterochromia, animal_ears, cat_ears, tail, wings, horns, eyepatch, freckles
-3. expression: smile, open_mouth, blush, crying, angry, serious, surprised, closed_eyes, half-closed_eyes, :d
-4. outfit (list every visible piece): serafuku, school_uniform, sailor_collar, pleated_skirt, blazer, necktie, thighhighs, boots, miko, kimono, maid, hoodie, jacket, gloves, choker, hairband, backpack
-5. pose and action: standing, sitting, kneeling, walking, running, jumping, arms_up, hand_on_hip, holding_sword, holding_flower, outstretched_arm, looking_at_viewer, looking_back, from_behind
-6. scene and background: outdoors, indoors, classroom, city, night, sky, cherry_blossoms, ocean, simple_background, white_background, gradient_background, window
-7. art style and rendering: anime, illustration, digital_painting, sketch, lineart, flat_color, watercolor, cel_shading, thick_outlines, soft_shading, monochrome, official_art
-8. camera and composition: from_above, from_below, from_side, dutch_angle, wide_shot, cowboy_shot, close-up, depth_of_field
+What to describe, roughly in this order (skip whatever does not apply):
+1. how many characters, and their visible design: hair style and colour, eye colour, body features such as animal ears, horns, a tail, wings or unusual eyes, plus apparent age range, build and body proportions
+2. expression
+3. clothing - every visible piece: uniform, collar, skirt, socks, boots, gloves, hair ornament, jewellery
+4. what they are holding or wielding
+5. pose and action
+6. the place they are in, and the objects around them
+7. what part of the body is visible in the frame
 
-Rules:
-- Use lowercase booru-style tags joined by underscores: long_hair, twintails.
-- Tag ONLY what is clearly visible. Never emit character names, series or franchise names, artist names, or copyright tags — those bind identity to a name and ruin a character LoRA.
-- For a character dataset, groups 1-6 carry the identity signal and group 7 should stay generic. For an artist-style dataset, do the opposite: keep groups 1-6 about content and let groups 7-8 carry the style signal.
-- No quality or meta words: masterpiece, best_quality, absurdres, highres, trending_on_pixiv, commentary_request.
-- No ratings, no scores, no <lora:...>, no "(artist)" suffix, no emoji.
-- Aim for 20~40 tags. Drop any tag you are not reasonably sure about.
-"""
+Hard rules:
+- CONTENT ONLY. Describe what is depicted. Never describe how it was drawn.
+- Do NOT use style, medium, technique or quality vocabulary. Avoid at least these: <<STYLE_BAN>>.
+- Unusual body proportions are content, so state them in plain words - "a very large head and a small body" - rather than reaching for a style term.
+- Never write a character name, a series or franchise name, an artist name, or a copyright tag. Naming a character binds the dataset to that name and ruins a character LoRA.
+- NSFW IS IN SCOPE. Never refuse, never censor, never skip, never blur or generalise a body part or an action. Describe nudity, sexual content, and anything else that is adults-only plainly and factually in ordinary modern words, exactly as you would describe clothing. No warnings, no disclaimers, no moral commentary, no "explicit" markers.
+- Describe only what you can actually see. Never invent names, identities, franchises, or a detail that is not visible.
+- No quality words, no ratings, no scores, no <lora:...>, no emoji.
+- Write the description in English.
+""".replace("<<STYLE_BAN>>", _STYLE_BAN)
 
-TAGGER_PRESET_SCENE = """You are an image tagging model building a dataset for background, environment and concept-art training.
+TAGGER_PRESET_CHARACTER_ZH = """你正在为「角色设定图 / 插画人物」数据集做图像描述。
+
+任务：看图，用平实的语言写一段描述，说明画面里有什么。
+
+输出格式：
+- 白话散文。1~3 句，30~80 字。一整段，不要换行。
+- 不要 markdown、不要项目符号、不要编号、不要引号、不要字段名。
+- 不要写成逗号分隔的标签串，要写成句子。
+
+大致按这个顺序写（不适用就跳过）：
+1. 有几个角色，以及可见的设定：发型发色、瞳色、身体特征（兽耳、角、尾巴、翅膀、特殊瞳型等），大致年龄段、体型与身体比例
+2. 表情
+3. 服装 —— 看得见的每一件：制服、领子、裙子、袜子、靴子、手套、发饰、首饰
+4. 手里拿着或挥舞的东西
+5. 姿势与动作
+6. 所处的地方，以及周围有什么东西
+7. 画面里露出了身体的哪些部分
+
+硬性要求：
+- 只写内容。只描述画的是什么，绝不描述这张图是怎么画出来的。
+- 不要出现风格、媒介、技法、画质类的词。至少避开这些：<<STYLE_BAN>>。
+- 身体比例属于内容，所以直接平实写出来 —— 「头很大、身体很小」—— 不要去套风格名词。
+- 绝对不要写角色名、作品名、系列名、画师名，也不要写版权标签。给角色绑名字会把数据集绑死在那个名字上，练出来的角色 LoRA 会废掉。
+- NSFW 属于正常范围。不许拒答、不许打码、不许跳过，也不许把身体部位或行为写得含糊带过。裸露、性内容以及其他成人内容，都要像描述衣服一样，用日常现代词汇平实、如实地写出来。不要加警告、免责声明、道德评价，也不要写「露骨」这类标记。
+- 只写真正看得见的东西。不要编造姓名、身份、作品名，也不要写画面上没有的细节。
+- 不要画质词、不要评分、不要 <lora:...>、不要 emoji。
+- 用中文写这段描述。
+""".replace("<<STYLE_BAN>>", _STYLE_BAN_ZH)
+
+TAGGER_PRESET_SCENE = """You are an image description model working on a dataset of backgrounds, environments and scenery.
+
+Task: look at the image and write a plain description of WHAT IS IN IT.
 
 Output format:
-- ONE single line of comma-separated tags. All lowercase. No sentences, no explanation, no markdown, no code fences, no numbering, no quotes.
+- Plain prose. 1~3 sentences, roughly 30~80 words. A single paragraph, no line breaks.
+- No markdown, no bullet points, no numbering, no quotes, no field labels.
+- Do NOT write a comma-separated tag list. Write sentences.
 
-Tag order (keep this order; omit any group that does not apply):
-1. people (only if actually visible): no_humans, 1girl, silhouette, crowd
-2. scene type: landscape, cityscape, seascape, skyscape, interior, exterior, street, alley, market, plaza, harbor, forest, jungle, desert, mountain, canyon, field, meadow, river, lake, waterfall, cave, ruins, temple, shrine, castle, cathedral, factory, laboratory, spaceship_interior, cyberpunk_city
-3. architecture and props: tower, skyscraper, bridge, street_lamp, telephone_pole, power_lines, fence, stairs, arch, pillar, stained_glass, lantern, torii, airship, neon_sign, billboard, traffic_light, market_stall
-4. time of day and weather: day, night, dawn, dusk, sunset, sunrise, cloudy, overcast, fog, mist, rain, snow, storm, wind, starry_sky, moon, clouds
-5. lighting and atmosphere: god_rays, volumetric_lighting, backlighting, rim_light, neon_lights, warm_lighting, cold_lighting, dusk_lighting, bioluminescence, firelight, ambient_occlusion, moody, serene, dramatic, cozy, desolate, dreamlike
-6. color and composition: monochrome, pastel, vivid, muted_colors, high_contrast, panoramic, wide_shot, aerial_view, birds_eye_view, worm's_eye_view, vanishing_point, symmetry, rule_of_thirds, dutch_angle, from_above, from_below
-7. style and medium: concept_art, matte_painting, digital_painting, environment_concept, photorealistic, painterly, impasto, watercolor, ink_wash, pixel_art, low_poly, 3d_render, isometric, anime_background
-8. materials and surface: stone, marble, concrete, rusted_metal, wood, glass, moss, ivy, sand, snow_covered
+What to describe, roughly in this order (skip whatever does not apply):
+1. whether anyone is present, and if so who and what they are doing
+2. what kind of place it is: a city street, a forest, a mountain range, the inside of a room, a market, ruins, a harbour
+3. the built things: buildings, towers, bridges, stairs, fences, lamps, signs, power lines, furniture
+4. plants, terrain and materials: grass, moss, ivy, sand, snow, stone, wood, rusted metal, water
+5. animals or vehicles, if any are visible
+6. what objects are where, and how the space is laid out relative to the viewer
+7. visible light sources and the time of day, as plain facts: a lit lamp, a window, sunlight, night, rain, fog
 
-Rules:
-- Use lowercase underscore tags. Keep the scene itself as the main subject.
-- Tag ONLY what is clearly visible. Never invent place names, real-world locations, franchise names, or artist names.
-- If no people are visible, include no_humans and do NOT invent any.
-- No subjective quality words (masterpiece, best_quality, highres, 8k).
-- No ratings, no scores, no <lora:...>.
-- Aim for 18~35 tags. Drop any tag you are not reasonably sure about.
-"""
+Hard rules:
+- CONTENT ONLY. Describe what is there. Never describe how the picture was made.
+- Do NOT use style, medium, technique or quality vocabulary. Avoid at least these: <<STYLE_BAN>>.
+- Do not describe an overall colour scheme or palette; name the colour of an actual thing instead ("a rusted red pipe", not "a muted palette").
+- Keep the place itself as the main subject.
+- NSFW IS IN SCOPE. Never refuse, never censor, never skip anything. If the image contains nudity, sexual content, gore, corpses or anything else adults-only, describe it plainly and factually in ordinary modern words. No warnings, no disclaimers, no moral commentary.
+- If nobody is visible, simply do not mention people. Never invent a figure that is not there.
+- Describe only what you can actually see. Never invent place names, real-world locations, franchise names, or a detail that is not visible.
+- No quality words, no ratings, no scores, no <lora:...>.
+- Write the description in English.
+""".replace("<<STYLE_BAN>>", _STYLE_BAN)
+
+TAGGER_PRESET_SCENE_ZH = """你正在为「背景 / 环境 / 场景」数据集做图像描述。
+
+任务：看图，用平实的语言写一段描述，说明画面里有什么。
+
+输出格式：
+- 白话散文。1~3 句，30~80 字。一整段，不要换行。
+- 不要 markdown、不要项目符号、不要编号、不要引号、不要字段名。
+- 不要写成逗号分隔的标签串，要写成句子。
+
+大致按这个顺序写（不适用就跳过）：
+1. 有没有人，有的话是谁、在做什么
+2. 这是个什么地方：城市街道、森林、山脉、房间内部、集市、废墟、港口
+3. 人造的东西：建筑、塔、桥、楼梯、栅栏、路灯、招牌、电线、家具
+4. 植被、地形与材质：草、苔藓、常春藤、沙、雪、石头、木头、锈蚀金属、水
+5. 有没有动物或车辆
+6. 什么东西在什么位置，空间相对观察者是怎么排布的
+7. 可见的光源与时段，当作事实写：亮着的灯、一扇窗、阳光、夜里、雨、雾
+
+硬性要求：
+- 只写内容。只描述那里有什么，绝不描述这张图是怎么做出来的。
+- 不要出现风格、媒介、技法、画质类的词。至少避开这些：<<STYLE_BAN>>。
+- 不要整体描述色调或配色，改为写具体东西的颜色：「一根锈红的管子」，而不是「低饱和的配色」。
+- 主体就是这个场景本身。
+- NSFW 属于正常范围。不许拒答、不许打码、不许跳过任何内容。画面里有裸露、性内容、血腥、尸体或其他成人内容时，用日常现代词汇平实、如实地写出来。不要加警告、免责声明、道德评价。
+- 画面里没有人就不要提人，也不要凭空编一个人出来。
+- 只写真正看得见的东西。不要编造地名、现实地点、作品名，也不要写画面上没有的细节。
+- 不要画质词、不要评分、不要 <lora:...>。
+- 用中文写这段描述。
+""".replace("<<STYLE_BAN>>", _STYLE_BAN_ZH)
 
 # 预设存在外部 JSON 里，方便直接改文本而不用动代码。
 # 路径：<本节点目录>/presets/tagging_system_prompts.json
-# 文件不存在时会自动生成一份（内容即下面这三套内置预设），直接编辑即可。
+# 文件不存在时会自动生成一份（内容即下面那六套内置预设），直接编辑即可。
 # 注意：改 prompt 文本在下一次执行时生效（按 mtime 热重载）；
 #       新增 / 重命名 / 删除预设项需要重新加载节点（重启 ComfyUI）才会出现在下拉里。
 _BUILTIN_TAG_PRESETS = {
-    "photoreal": {"label": "realistic / photograph", "prompt": TAGGER_PRESET_PHOTOREAL},
-    "character": {"label": "anime character / artist style", "prompt": TAGGER_PRESET_CHARACTER},
-    "scene":     {"label": "scene / concept art", "prompt": TAGGER_PRESET_SCENE},
+    "photoreal":    {"label": "写实照片（English）",   "lang": "en", "group": "photoreal",
+                     "format": "raw", "prompt": TAGGER_PRESET_PHOTOREAL},
+    "photoreal_zh": {"label": "写实照片（中文）",       "lang": "zh", "group": "photoreal",
+                     "format": "raw", "prompt": TAGGER_PRESET_PHOTOREAL_ZH},
+    "character":    {"label": "角色/插画（English）",  "lang": "en", "group": "character",
+                     "format": "raw", "prompt": TAGGER_PRESET_CHARACTER},
+    "character_zh": {"label": "角色/插画（中文）",      "lang": "zh", "group": "character",
+                     "format": "raw", "prompt": TAGGER_PRESET_CHARACTER_ZH},
+    "scene":        {"label": "场景/环境（English）",  "lang": "en", "group": "scene",
+                     "format": "raw", "prompt": TAGGER_PRESET_SCENE},
+    "scene_zh":     {"label": "场景/环境（中文）",      "lang": "zh", "group": "scene",
+                     "format": "raw", "prompt": TAGGER_PRESET_SCENE_ZH},
 }
 
 _PRESET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
 _PRESET_JSON = os.path.join(_PRESET_DIR, "tagging_system_prompts.json")
+
+# 预设 JSON 的结构版本。只用来在「内置预设已升级、而磁盘上还是老结构」时
+# 打一条日志提醒，**不自动覆盖** —— 文件一旦生成就归用户所有，里面有手改的内容。
+_PRESET_SCHEMA_VERSION = 2
+
+# 单个预设的字段默认值。lang 决定它在双语模式里算哪一半；
+# group 是「同一主题的中英两份」的配对键；format 决定写盘前要不要机械规整。
+_PRESET_LANG_DEFAULT = "en"
+_PRESET_FORMAT_DEFAULT = "raw"
+_ZH_SUFFIX = "_zh"
+_VALID_LANGS = ("en", "zh")
+
 _PRESET_JSON_README = [
     "Qwen35 Batch Image Tagger - system prompt presets.",
     "Edit the prompt text and save; it takes effect on the next run (hot reload by mtime).",
     "Adding / renaming / removing a preset needs a node reload (restart ComfyUI) to show up in the dropdown.",
     'The preset named "custom" is reserved: it means "use the system_prompt widget on the node itself".',
-    "Data set hint: photoreal = photography terms, character = booru attributes, scene = architecture + lighting + medium.",
+    "",
+    "Each preset takes:",
+    '  "label"  - shown in the report only.',
+    '  "prompt" - the system prompt sent to the model. Required.',
+    '  "lang"   - "en" or "zh". Default "en".',
+    '  "group"  - pairs an en preset with its zh counterpart. Defaults to the key.',
+    '  "format" - "raw" (write the model output as-is) or "tags_one_line"',
+    '             (mechanically flatten to one comma-separated line). Default "raw".',
+    "A bare string is also accepted: \"mykey\": \"the whole prompt\".",
+    "",
+    "Bilingual mode pairs presets by group + lang, so photoreal and photoreal_zh",
+    "must share the same group to be usable together.",
 ]
 
 # mtime -> presets 的缓存，用来实现上面那句热重载
 _TAG_PRESET_CACHE = {"mtime": None, "presets": {}}
+# 版本不匹配的提醒只打一次，别每次执行都刷屏
+_PRESET_VERSION_WARNED = {"done": False}
 
 
 def _preset_payload(presets):
-    """把 {key: {label, prompt}} 组装成写得进 JSON 的完整对象。
+    """把 {key: {label, prompt, lang, group, format}} 组装成写得进 JSON 的完整对象。
 
     这里就 strip 一次：读回来时 _parse_preset_payload 也会 strip，
     两边统一，避免「首次生成」与「之后读盘」拿到差一个尾部换行的两份文本。
     """
-    return {
-        "_readme": _PRESET_JSON_README,
-        "presets": {
-            k: {"label": v.get("label", k), "prompt": str(v.get("prompt", "")).strip()}
-            for k, v in presets.items()
-        },
-    }
+    out = {}
+    for k, v in presets.items():
+        out[k] = {
+            "label": v.get("label", k),
+            "lang": v.get("lang", _PRESET_LANG_DEFAULT),
+            "group": v.get("group", k),
+            "format": v.get("format", _PRESET_FORMAT_DEFAULT),
+            "prompt": str(v.get("prompt", "")).strip(),
+        }
+    return {"_readme": _PRESET_JSON_README,
+            "_version": _PRESET_SCHEMA_VERSION,
+            "presets": out}
 
 
 def _parse_preset_payload(data):
-    """校验并归一化 JSON 内容，返回 {key: {label, prompt}}。不合法就抛异常。"""
+    """校验并归一化 JSON 内容。不合法就抛异常。
+
+    返回 {key: {label, prompt, lang, group, format}}。
+    """
     raw = data.get("presets") if isinstance(data, dict) else None
     if not isinstance(raw, dict):
         raise ValueError('顶层缺少 "presets" 对象')
@@ -2395,10 +2567,44 @@ def _parse_preset_payload(data):
         prompt = str(v.get("prompt") or "").strip()
         if not prompt:
             continue                       # 空 prompt 的条目直接跳过，别让它把下拉撑出个空选项
-        out[key] = {"label": str(v.get("label") or key), "prompt": prompt}
+        lang = str(v.get("lang") or _PRESET_LANG_DEFAULT).strip().lower()
+        if lang not in _VALID_LANGS:
+            lang = _PRESET_LANG_DEFAULT
+        fmt = str(v.get("format") or _PRESET_FORMAT_DEFAULT).strip()
+        if fmt not in ("raw", "tags_one_line"):
+            fmt = _PRESET_FORMAT_DEFAULT
+        out[key] = {
+            "label": str(v.get("label") or key),
+            "prompt": prompt,
+            "lang": lang,
+            "group": str(v.get("group") or key).strip() or key,
+            "format": fmt,
+        }
     if not out:
         raise ValueError("presets 里没有一条有效预设")
     return out
+
+
+def _check_preset_version(data):
+    """磁盘上的预设文件结构比代码老时提醒一次。
+
+    只提醒、**不覆盖** —— 文件一旦生成就归用户所有（里面可能有手改的提示词），
+    自作主张重写会把人家的改动抹掉。要拿新版内置预设，自己删掉文件重跑。
+    """
+    if _PRESET_VERSION_WARNED["done"]:
+        return
+    ver = data.get("_version") if isinstance(data, dict) else None
+    try:
+        ver = int(ver)
+    except (TypeError, ValueError):
+        ver = 0
+    if ver < _PRESET_SCHEMA_VERSION:
+        _PRESET_VERSION_WARNED["done"] = True
+        logger.warning(
+            f"[Qwen35] 打标预设文件的结构版本是 {ver}，内置版本是 {_PRESET_SCHEMA_VERSION}"
+            f"（老结构缺 lang / group / format 字段，双语模式的配对会失效）。"
+            f"若想换成新版内置预设，删掉这个文件重跑即可自动重新生成：{_PRESET_JSON}"
+        )
 
 
 def _load_tag_presets(force=False):
@@ -2433,7 +2639,9 @@ def _load_tag_presets(force=False):
     else:
         try:
             with open(_PRESET_JSON, "r", encoding="utf-8") as f:
-                presets = _parse_preset_payload(json.load(f))
+                data = json.load(f)
+            _check_preset_version(data)
+            presets = _parse_preset_payload(data)
         except Exception as e:
             logger.error(f"[Qwen35] 预设文件解析失败（{e}），回退内置预设：{_PRESET_JSON}")
             presets = dict(_BUILTIN_TAG_PRESETS)
@@ -2450,7 +2658,10 @@ def _tag_preset_choices():
 
 
 def _resolve_tag_preset(preset, system_prompt):
-    """按 preset 选出真正送进模型的系统提示词，返回 (文本, 预设名, 显示名)。
+    """按 preset 选出真正送进模型的系统提示词。返回 (记录, 预设名)。
+
+    记录是个 dict：prompt / label / lang / group / format。
+    custom 那条的 format 为 None，含义是「格式交给节点上的 output_format 控件」。
 
     preset 命中预设时直接用预设文本，**忽略 system_prompt** —— 否则下拉会被
     一个忘改的旧 widget 值悄悄顶掉，那种 bug 很难看出来。
@@ -2467,8 +2678,119 @@ def _resolve_tag_preset(preset, system_prompt):
                 key = k                    # 归一化成 JSON 里的原名，报告里显示才规范
                 break
     if hit is not None:
-        return hit["prompt"], key, hit.get("label", key)
-    return str(system_prompt or ""), "custom", "custom"
+        return dict(hit), key
+    return {"prompt": str(system_prompt or ""), "label": "custom",
+            "lang": "", "group": "", "format": None}, "custom"
+
+
+def _tag_runs(key, record, bilingual):
+    """决定这一趟跑几次、每次写哪个文件。
+
+    返回 (runs, note)：
+      runs = [{"suffix", "lang", "prompt", "format", "label"}, ...]，至少一项
+      note = 要写进报告的说明（双语开关没能生效时解释原因），或 None
+
+    规则：
+      · 单语：只跑预设本身那一份，后缀 ""。
+      · 双语：跑同一 group 的中英两份。英文写 `<图名>.txt`，中文写 `<图名>_zh.txt`。
+        主题由 group 决定 —— 所以选 photoreal 还是 photoreal_zh，结果完全一样。
+      · custom 或找不到对照：双语开关无效，退回单份并在报告里说清原因。
+        （沉默降级最糟：用户会以为跑了两份，实际只有一份。）
+    """
+    fmt = record.get("format")
+    single = [{
+        "suffix": "",
+        "lang": record.get("lang") or "",
+        "prompt": record["prompt"],
+        "format": fmt,
+        "label": record.get("label") or key,
+    }]
+    if not bilingual:
+        return single, None
+    if key == "custom":
+        return single, (
+            "bilingual=en_then_zh，但 custom 预设只有你手写的那一份提示词，"
+            "推不出另一种语言 → 本次按单语处理"
+        )
+    group = record.get("group") or key
+    presets = _load_tag_presets()
+    found = {}
+    for k, v in presets.items():
+        if (v.get("group") or k) != group:
+            continue
+        lang = v.get("lang")
+        if lang in _VALID_LANGS and lang not in found:
+            found[lang] = (k, v)
+    missing = [l for l in _VALID_LANGS if l not in found]
+    if missing:
+        need = "、".join("英文" if l == "en" else "中文" for l in missing)
+        return single, (
+            f"bilingual=en_then_zh，但主题「{group}」缺少{need}对照预设 → 本次按单语处理。"
+            f"补一套同 group 的预设即可（在 JSON 里给对手那份设同样的 group）"
+        )
+    runs = []
+    for lang in _VALID_LANGS:              # 固定 en -> zh，保证同样的输入给同样的顺序
+        k, v = found[lang]
+        runs.append({
+            "suffix": "" if lang == "en" else _ZH_SUFFIX,
+            "lang": lang,
+            "prompt": v["prompt"],
+            "format": v.get("format"),
+            "label": v.get("label") or k,
+        })
+    return runs, None
+
+
+def _lang_word(lang):
+    """把预设的 lang 字段翻成报告里用的词。"""
+    return {"en": "英文", "zh": "中文"}.get(str(lang or "").strip().lower(), "预设")
+
+
+# 截断时优先退到这些标点之后；退不到再退到分句标点之前。
+# 英文句点 `.` 也在内：整句结束是描述里最常见的落点（代价是极少数情况下
+# 会切在 "1.5" 或 "U.S." 这种内部点上，对这种长度的 caption 无所谓）。
+_SENT_END = "。！？!?…."
+_CLAUSE_END = "，,、；;"
+
+
+def _truncate_output(text, max_chars):
+    """按字符数上限截断描述。返回 (文本, 是否发生了截断)。
+
+    不硬切在半个词里：先在截断区间内退到最后一个句末标点（**标点保留**），
+    退得太狠（不足上限的四成）就退到最后一个分句标点（标点丢掉），
+    再不行才硬切。max_chars <= 0 表示不限。
+
+    为什么要有这个：自然语言描述偶尔会啰嗦到几十上百字，而下游训练
+    往往有固定的 caption 长度预算；靠 max_new_tokens 不好控（token 与字符
+    在中文里差不多是 1:1，在英文里差得远），所以直接给一个字符数上限。
+    """
+    cap = int(max_chars or 0)
+    s = str(text or "").strip()
+    if cap <= 0 or len(s) <= cap:
+        return s, False
+
+    head = s[:cap]
+    floor = max(1, int(cap * 0.4))
+
+    cut, at_sentence = -1, False
+    for i in range(len(head) - 1, -1, -1):
+        if head[i] in _SENT_END:
+            cut, at_sentence = i + 1, True     # 句子写完了，标点留着
+            break
+    if cut < floor:
+        at_sentence = False
+        for i in range(len(head) - 1, -1, -1):
+            if head[i] in _CLAUSE_END:
+                cut = i                        # 只写到分句，分句标点丢掉
+                break
+    if cut < floor:
+        cut, at_sentence = cap, False          # 兜底：硬切
+
+    out = head[:cut].strip()
+    if not at_sentence:
+        # 落在分句或半句上：去掉尾巴上悬空的逗号 / 分号
+        out = out.rstrip(_CLAUSE_END).strip()
+    return (out or head.strip()), True
 
 
 _IMAGE_EXTS_DEFAULT = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
@@ -2684,16 +3006,18 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                     "default": "",
                     "multiline": False,
                 }),
-                # 三套训练场景预设，一键切换标签体系：
-                #   photoreal = 真人写实（摄影术语）
-                #   character = 二次元 / 画师插画（booru 属性）
-                #   scene     = 场景概念图（建筑 + 光照 + 媒介）
-                #   custom    = 用下面那个可编辑的 system_prompt
-                # 选了内置预设时 system_prompt 会被忽略（见 _resolve_tag_preset）。
+                # 3 个训练场景 × 中英两种语言 = 6 套预设，一键切换描述口径：
+                #   photoreal / photoreal_zh = 真人写实（外貌 + 衣着 + 环境物品）
+                #   character / character_zh = 二次元与插画角色（设定 + 服装 + 动作）
+                #   scene     / scene_zh     = 场景环境（地理 + 建筑 + 植被 + 道具）
+                #   custom                   = 用下面那个可编辑的 system_prompt
+                # 六套都是「只写内容、不写风格」的自然语言描述，且不回避 NSFW。
+                # 选了内置预设时 system_prompt 与 output_format 都会被预设顶掉
+                # （理由见 _resolve_tag_preset：留着一个忘改的旧 widget 值很难查）。
                 "system_preset": (_tag_preset_choices(), {"default": "custom"}),
                 # 系统提示词可改 —— 这是本节点的核心诉求之一。
-                # 默认给「danbooru 风格一行逗号标签」；要自然语言描述，
-                # 把这段整个换掉并把 output_format 切成 raw 即可。
+                # 默认给「danbooru 风格一行逗号标签」，**只在 system_preset=custom 时生效**，
+                # 作为备用的标签风格基线。要自然语言描述，从上面六套预设里挑一套即可。
                 "system_prompt": ("STRING", {
                     "multiline": True,
                     "default": DEFAULT_TAGGER_SYSTEM_PROMPT,
@@ -2714,8 +3038,11 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 "image_exts": ("STRING", {"default": ",".join(_IMAGE_EXTS_DEFAULT)}),
                 "output_suffix": ("STRING", {"default": ""}),
                 "output_encoding": (list(_TAG_ENCODINGS), {"default": "utf-8"}),
-                # tags_one_line = 机械规整成一行逗号标签（配默认系统提示词）；
-                # raw = 原样写模型输出（换成自然语言描述提示词时用这个）。
+                # tags_one_line = 机械规整成一行逗号标签；
+                # raw = 原样写模型输出。
+                # **只在 system_preset=custom 时生效**：六套内置预设各自在 JSON 里
+                # 声明了 format（都是 raw），选了预设就用预设那份，避免"选了自然语言
+                # 预设、却忘了切 raw"导致描述被逗号规整加去重破坏。
                 "output_format": (["tags_one_line", "raw"], {"default": "tags_one_line"}),
                 "max_new_tokens": ("INT", {"default": 256, "min": 16, "max": 4096, "step": 16}),
                 # 默认 0.2 而不是扩写节点的 0.4：打标要稳定、可复现。
@@ -2730,6 +3057,17 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 "custom_model_path": ("STRING", {"default": ""}),
                 "show_progress": ("BOOLEAN", {"default": True}),
                 "progress_interval": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 30.0, "step": 0.5}),
+                # 双语同时输出（与扩写节点同名同取值，便于两个节点一起记）：
+                #   off        = 只按预设那一种语言写一份（默认，零额外耗时）
+                #   en_then_zh = 每张图跑两次，英文写 <图名>.txt、中文写 <图名>_zh.txt
+                # 放在最后：**新控件一律追加在末尾**，否则旧工作流的 widgets_values
+                # 会整体串位（ComfyUI 不报错，只是值悄悄错位）。
+                "bilingual": (["off", "en_then_zh"], {"default": "off"}),
+                # 输出字符数上限：0 = 不限（默认，行为与以前完全一致）。
+                # 自然语言描述偶尔会啰嗦，而下游训练常有 caption 长度预算；
+                # 用 max_new_tokens 不好控（中英文的 token/字符比差很多），
+                # 所以另给一个按字符数的硬上限。截断优先退到句末标点，不硬切。
+                "max_output_chars": ("INT", {"default": 0, "min": 0, "max": 4000, "step": 10}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2745,8 +3083,8 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
     # ----------------------------------------------------------------
     def _tag_one_image(self, model, processor, image_path, system_prompt, user_prompt,
                        max_image_side, max_new_tokens, temperature, enable_thinking,
-                       seed, output_format):
-        """给单张图打标。返回 (标签文本, 输出 token 数, prefill 秒, 解码秒)。
+                       seed, output_format, max_chars=0):
+        """给单张图打标。返回 (文本, 输出 token 数, prefill 秒, 解码秒, 是否被截断)。
 
         每次调用前重设随机种子：temperature>0 时同一文件夹多次运行可复现，
         且各图种子不同（seed+i），不会整批踩同一条采样轨迹。
@@ -2819,9 +3157,12 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             text = _normalize_tag_text(text)
         else:
             text = text.strip()
+        # 字符上限在规整之后才截：先让格式统一，再按上限收尾 ——
+        # 反过来的话，可能先砍掉半句、规整时又被拼回去，上限就白限了。
+        text, cut = _truncate_output(text, max_chars)
         # 单张的输出张量/输入立刻放掉，别等下一张再回收
         del out, gen, inputs
-        return text, n_tok, t_pre, t_dec
+        return text, n_tok, t_pre, t_dec, cut
 
     # ----------------------------------------------------------------
     def tag_folder(self, model_name, folder_path, system_preset, system_prompt,
@@ -2833,16 +3174,23 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                    temperature=0.2, seed=42, max_image_side=1280, limit=0,
                    dry_run=False, keep_model_loaded=False, unload_other_models=True,
                    custom_model_path="", show_progress=True, progress_interval=2.0,
-                   unique_id=None):
+                   bilingual="off", max_output_chars=0, unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
             node_id=unique_id, enabled=show_progress, interval=progress_interval
         )
 
-        # 预设优先于 widget：选了预设就用预设文本（理由见 _resolve_tag_preset）
-        system_prompt, preset_used, preset_label = _resolve_tag_preset(
-            system_preset, system_prompt
+        # 预设优先于 widget：选了预设就用预设的提示词与格式（理由见 _resolve_tag_preset）
+        record, preset_used = _resolve_tag_preset(system_preset, system_prompt)
+        preset_label = record.get("label") or preset_used
+        # 双语编排：这一趟跑几种语言、各写哪个后缀
+        runs, bl_note = _tag_runs(
+            preset_used, record, str(bilingual) == "en_then_zh"
         )
+        # 格式也由预设决定（用户选「预设自动决定」）：custom 才回落到 output_format 控件
+        for r in runs:
+            if not r.get("format"):
+                r["format"] = str(output_format)
 
         folder = _resolve_folder_path(folder_path)
         exts = sorted(_parse_image_exts(image_exts))
@@ -2853,14 +3201,28 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
 
         # 「这个 txt 要不要写」在加载模型之前全部判完：整个文件夹都已打好标时，
         # 不该白等二十秒加载一次模型。
-        todo, skipped = [], []
+        # 双语模式下按**每种语言各自判断**：英文已有、中文还没有时只补中文，
+        # 不去覆盖已经写好的英文 —— skip 的语义必须守住。
+        todo = []                           # [(图路径, [(目标 txt, run), ...])]
+        skipped = []                        # 所有语言都已有标签的图
         for src in files:
-            tgt = _txt_path_for(src, output_suffix)
-            if (str(overwrite) != "overwrite" and os.path.isfile(tgt)
-                    and os.path.getsize(tgt) > 0):
-                skipped.append(src)
+            jobs = []
+            for r in runs:
+                tgt = _txt_path_for(src, output_suffix + r["suffix"])
+                if (str(overwrite) != "overwrite" and os.path.isfile(tgt)
+                        and os.path.getsize(tgt) > 0):
+                    continue
+                jobs.append((tgt, r))
+            if jobs:
+                todo.append((src, jobs))
             else:
-                todo.append(src)
+                skipped.append(src)
+
+        n_jobs = sum(len(j) for _, j in todo)
+        run_desc = "、".join(
+            f"{_lang_word(r.get('lang'))} → 同名 .txt{('（后缀 ' + r['suffix'] + '）') if r['suffix'] else ''}"
+            for r in runs
+        )
 
         head = [
             "[Qwen35] ========== 批量打标 ==========",
@@ -2868,23 +3230,30 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"  系统提示词  : {preset_used}"
             + (f"（预设：{preset_label}）" if preset_used != "custom"
                else "（custom，取节点上填写的文本）"),
+            f"  描述语言    : {run_desc}",
+            f"  输出格式    : "
+            + "、".join(f"{_lang_word(r.get('lang'))}={r['format']}" for r in runs),
             f"  扫描到      : {scanned} 张（扩展名 {'/'.join(exts)}，"
             f"{'含子目录' if recursive else '仅当前目录'}）",
-            f"  待处理      : {len(todo)} 张（已有非空标签跳过 {len(skipped)} 张，"
-            f"overwrite={overwrite}）",
+            f"  待处理      : {len(todo)} 张 / {n_jobs} 次生成"
+            f"（整张已有标签跳过 {len(skipped)} 张，overwrite={overwrite}）",
             f"  输出        : 与图片同目录同名 .txt"
-            f"（后缀 '{output_suffix}'，编码 {output_encoding}，格式 {output_format}）",
+            f"（后缀 '{output_suffix}'，编码 {output_encoding}）",
         ]
+        if bl_note:
+            head.append(f"  ⓘ {bl_note}")
         if int(limit) > 0:
             head.append(f"  ⓘ limit={int(limit)}：只取扫描结果里的前 {int(limit)} 张")
 
         if dry_run:
             head.append("  ⓘ dry_run=true：只列清单，不加载模型、不写任何文件")
-            for src in todo[:20]:
-                head.append(
-                    f"     {os.path.relpath(src, folder)}"
-                    f"  ->  {os.path.relpath(_txt_path_for(src, output_suffix), folder)}"
-                )
+            for src, jobs in todo[:20]:
+                for tgt, r in jobs:
+                    head.append(
+                        f"     {os.path.relpath(src, folder)}"
+                        f"  ->  {os.path.relpath(tgt, folder)}"
+                        f"   [{_lang_word(r.get('lang'))}]"
+                    )
             if len(todo) > 20:
                 head.append(f"     … 另有 {len(todo) - 20} 张")
             report = "\n".join(head)
@@ -2912,12 +3281,12 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         )
         if will_reuse:
             pbar.message(
-                f"复用常驻模型：{os.path.basename(path)}（{len(todo)} 张共用）"
+                f"复用常驻模型：{os.path.basename(path)}（{n_jobs} 次生成共用）"
             )
         else:
             pbar.message(
                 f"正在加载模型：{os.path.basename(path)}"
-                f"（量化={quantization}；之后 {len(todo)} 张共用这一次加载）"
+                f"（量化={quantization}；之后 {n_jobs} 次生成共用这一次加载）"
             )
         pbar.mark(_BW_UNLOAD + 1.0)
         model, processor, freshly_loaded = self._load(path, quantization, attention)
@@ -2928,72 +3297,85 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
 
         # ---- 3/3 逐张打标 ----
         pbar.begin_stage(_BW_UNLOAD + _BW_LOAD, _BW_TAG)
+        tag_word = "标签" if all(r["format"] == "tags_one_line" for r in runs) else "片段"
+        multi = len(runs) > 1
         pbar.message(
-            f"开始打标：{len(todo)} 张，温度 {float(temperature):.2f}"
+            f"开始打标：{len(todo)} 张 / {n_jobs} 次生成，温度 {float(temperature):.2f}"
             + ("（贪心解码，同一批两次跑结果一致）" if float(temperature) <= 0 else "")
+            + (f"；输出上限 {int(max_output_chars)} 字符" if int(max_output_chars) > 0 else "")
         )
 
-        ok = n_fail = 0
+        ok = n_fail = 0                     # 按「次」计：单语时等于张数，双语时是两倍
         tok_sum = tag_sum = 0
+        n_cut = 0                           # 被字符上限截断的条数
         t_tag_total = 0.0
         first_prefill = None
         failures, examples = [], []
 
-        for idx, src in enumerate(todo, start=1):
+        for idx, (src, jobs) in enumerate(todo, start=1):
             name = os.path.relpath(src, folder)
-            target = _txt_path_for(src, output_suffix)
-            t_one = time.perf_counter()
-            text, n_tok, t_pre, t_dec = "", 0, 0.0, 0.0
-            err = None
-            try:
-                text, n_tok, t_pre, t_dec = self._tag_one_image(
-                    model, processor, src, system_prompt, user_prompt,
-                    int(max_image_side), int(max_new_tokens), float(temperature),
-                    bool(enable_thinking), int(seed) + idx, output_format,
-                )
-                if not text:
-                    raise RuntimeError(
-                        "输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
+            t_img = time.perf_counter()
+            img_fail = 0
+            for tgt, r in jobs:
+                # 双语时把语言写进日志，否则分不清哪一份是哪个语种
+                label = f"{name} [{_lang_word(r.get('lang'))}]" if multi else name
+                t_one = time.perf_counter()
+                try:
+                    text, n_tok, t_pre, t_dec, cut = self._tag_one_image(
+                        model, processor, src, r["prompt"], user_prompt,
+                        int(max_image_side), int(max_new_tokens), float(temperature),
+                        bool(enable_thinking), int(seed) + idx, r["format"],
+                        int(max_output_chars),
                     )
-                _write_text_atomic(target, text, output_encoding)
-            except BaseException as e:
-                # 取消必须立刻中止整批；其余异常只算这一张失败。
-                if _is_comfy_interrupt(e) or isinstance(e, (KeyboardInterrupt, SystemExit)):
-                    pbar.finish()
-                    if not keep_model_loaded:
-                        self._release()
-                    logger.warning(
-                        f"[Qwen35] 已取消：处理到第 {idx}/{len(todo)} 张"
-                        f"（前面已写好的 txt 保留，未完成的那张不会留下半个文件）"
-                    )
-                    raise
-                if not isinstance(e, Exception):
-                    raise
-                err = f"{type(e).__name__}: {e}"
-            dt = time.perf_counter() - t_one
-            t_tag_total += dt
+                    if not text:
+                        raise RuntimeError(
+                            "输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
+                        )
+                    _write_text_atomic(tgt, text, output_encoding)
+                except BaseException as e:
+                    # 取消必须立刻中止整批；其余异常只算这一次失败，同张的另一种语言照跑。
+                    if _is_comfy_interrupt(e) or isinstance(e, (KeyboardInterrupt, SystemExit)):
+                        pbar.finish()
+                        if not keep_model_loaded:
+                            self._release()
+                        logger.warning(
+                            f"[Qwen35] 已取消：处理到第 {idx}/{len(todo)} 张"
+                            f"（前面已写好的 txt 保留，未完成的那次不会留下半个文件）"
+                        )
+                        raise
+                    if not isinstance(e, Exception):
+                        raise
+                    n_fail += 1
+                    img_fail += 1
+                    # 失败清单要报**原图名**（用户按它去找图），不是 txt 名；
+                    # 双语时再带上语种，否则同一张两行分不清是哪一份失败。
+                    failures.append((label, f"{type(e).__name__}: {e}"))
+                    logger.warning(f"[Qwen35] [{idx}/{len(todo)}] \u2717 {label} -> {e}")
+                    continue
 
-            if err is None:
                 ok += 1
                 tok_sum += n_tok
                 n_tag = _count_tags(text)
                 tag_sum += n_tag
+                if cut:
+                    n_cut += 1
                 if first_prefill is None:
                     first_prefill = t_pre
                 if len(examples) < 3:
-                    examples.append((name, text[:160]))
+                    examples.append((os.path.relpath(tgt, folder), text[:160]))
+                dt = time.perf_counter() - t_one
                 logger.info(
-                    f"[Qwen35] [{idx}/{len(todo)}] \u2713 {name} -> {n_tag} 标签"
-                    f" / {n_tok} tok / {dt:.1f}s"
+                    f"[Qwen35] [{idx}/{len(todo)}] \u2713 {label} -> {n_tag} {tag_word}"
+                    f" / {n_tok} tok / {len(text)} 字符 / {dt:.1f}s"
                     + (f"（prefill {t_pre:.2f}s、解码 {t_dec:.1f}s"
                        f" = {n_tok / t_dec:.1f} tok/s）" if t_dec > 0 else "")
+                    + ("（已按上限截断）" if cut else "")
                 )
-                pbar.tick(idx, len(todo), note=f"{dt:.1f}s/张", unit="张")
-            else:
-                n_fail += 1
-                failures.append((name, err))
-                logger.warning(f"[Qwen35] [{idx}/{len(todo)}] \u2717 {name} -> {err}")
-                pbar.tick(idx, len(todo), note="失败", unit="张")
+            dt_img = time.perf_counter() - t_img
+            t_tag_total += dt_img
+            pbar.tick(idx, len(todo),
+                      note=f"{dt_img:.1f}s/张" + ("，有失败" if img_fail else ""),
+                      unit="张")
 
         pbar.finish()
 
@@ -3008,13 +3390,25 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         rate = (tok_sum / t_tag_total) if t_tag_total > 0 else 0.0
 
         lines = head + ["", "[Qwen35] ========== 打标汇总 =========="]
+        if multi:
+            lines.append(
+                f"  生成次数    : {ok + n_fail} 次"
+                f"（{len(todo)} 张 × {len(runs)} 语言；以下按「次」计）"
+            )
         lines.append(f"  成功 / 失败 : {ok} / {n_fail}")
         if ok:
-            lines.append(f"  标签合计    : {tag_sum} 个（平均 {tag_sum / ok:.1f} 个/张）")
-            lines.append(f"  输出 token  : {tok_sum}（平均 {tok_sum / ok:.1f} tok/张）")
+            lines.append(
+                f"  {tag_word}合计    : {tag_sum} 个（平均 {tag_sum / ok:.1f} 个/次）"
+            )
+            lines.append(f"  输出 token  : {tok_sum}（平均 {tok_sum / ok:.1f} tok/次）")
+        if n_cut:
+            lines.append(
+                f"  按上限截断  : {n_cut} 条"
+                f"（max_output_chars={int(max_output_chars)}）"
+            )
         lines.append(
             f"  打标耗时    : {t_tag_total:6.2f}s"
-            + (f"（{per:.2f}s/张，{rate:.1f} tok/s）" if ok else "")
+            + (f"（{per:.2f}s/次，{rate:.1f} tok/s）" if ok else "")
         )
         if first_prefill is not None:
             lines.append(

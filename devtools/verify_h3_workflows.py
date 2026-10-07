@@ -138,8 +138,10 @@ def check(fname):
             if len(w) >= 14:
                 print(f"        folder_path={w[1]!r}  preset={w[2]!r}  quantization={w[5]!r}  "
                       f"overwrite={w[9]!r}  format={w[13]!r}")
-            if len(w) != 25:
-                problems.append(f"BatchTagger widgets 应为 25 项，实际 {len(w)}")
+            if len(w) >= 27:
+                print(f"        bilingual={w[25]!r}  max_output_chars={w[26]!r}")
+            if len(w) != 27:
+                problems.append(f"BatchTagger widgets 应为 27 项，实际 {len(w)}")
             if len(w) >= 14:
                 # system_preset 是动态下拉（选项来自 presets/tagging_system_prompts.json），
                 # 这里只能校验它非空；具体预设名是否有效由 test_qwen35_tagger.py 覆盖。
@@ -149,6 +151,14 @@ def check(fname):
                     problems.append(f"BatchTagger overwrite 非法: {w[9]!r}")
                 if w[13] not in ("tags_one_line", "raw"):
                     problems.append(f"BatchTagger output_format 非法: {w[13]!r}")
+                # 末尾两个是后加的控件（双语开关 / 字符上限）；旧工作流升级后
+                # widgets_values 可能只有 25 项，那种情况 ComfyUI 会用控件默认值补上，
+                # 不算错误，这里仅在字段存在时校验取值。
+                if len(w) >= 27:
+                    if w[25] not in ("off", "en_then_zh"):
+                        problems.append(f"BatchTagger bilingual 非法: {w[25]!r}")
+                    if not isinstance(w[26], int) or w[26] < 0:
+                        problems.append(f"BatchTagger max_output_chars 非法: {w[26]!r}")
                 # 只有 preset=custom 时 system_prompt 才会被用到，此时它该是默认那份
                 if w[2] == "custom" and w[3] and "danbooru" not in str(w[3]):
                     notes.append(
