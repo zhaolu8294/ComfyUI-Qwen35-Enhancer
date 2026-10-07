@@ -2053,7 +2053,12 @@ check("L2d custom 上下限写反了会自动摆正",
       _words_of("custom", "150-60") == (60, 150), str(_words_of("custom", "150-60")))
 check("L2e custom 解析不出来 -> 退回 preset（宁可不改，也不乱改）",
       all(_words_of("custom", s) is None
-          for s in ("", "80", "abc", "0~0", "-", "150~", "~80")))
+          for s in ("", "abc", "0~0", "-", "150~", "~80", "0", "words")))
+check("L2e2 单个数也认 -> 按 ±30% 摊成区间（用户常直接填「300」表示大约 300 词）",
+      _words_of("custom", "300") == (210, 390)
+      and _words_of("custom", "80") == (56, 104)
+      and _words_of("custom", "300 words") == (210, 390),
+      str([_words_of("custom", s) for s in ("300", "80", "300 words")]))
 _c30 = QM._resolve_desc_length("custom", "30~80")
 check("L2f 字数 30~80 反推出的句数正好是 1~3（与预设原文一致，换算没跑偏）",
       _c30 is not None and _c30[:2] == (1, 3), str(_c30))
@@ -2601,6 +2606,96 @@ check("N9d 两个节点的签名默认值也跟着抬（直接调函数时行为
       inspect.signature(NODE.tag_folder).parameters["max_image_side"].default == 1536
       and inspect.signature(NODE.enhance).parameters["max_image_side"].default == 1536,
       str(inspect.signature(NODE.enhance).parameters["max_image_side"].default))
+
+# ==========================================================================
+# O) GGUF 思考兜底
+#
+# 现场：27B + GGUF 后端 + refine，7 张全部「输出为空」。定位下来是
+# enable_thinking 开着时，llama-server 用 --reasoning-format 把 think 块
+# 分流进 reasoning_content，模型把 1024 tok 预算全烧在思考上，content 只剩空串。
+# 本机实测同一张图：关思考 120 tok / 4.4s 正常；开思考 515 tok / 39.9s 且一半为空。
+# 修法是「正文空 + 思考块非空 + 开着思考」时当场关掉思考重跑一次。
+# ==========================================================================
+print("\n" + "=" * 74)
+print("O) GGUF 思考兜底（正文被 think 挤空时自动关掉思考重跑）")
+print("=" * 74)
+
+
+class _FakeGgufServer:
+    """按预设顺序吐响应的假 llama-server，并记录每次收到的参数。"""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    def chat(self, **kw):
+        self.calls.append(kw)
+        r = self.replies.pop(0) if self.replies else {"text": "", "reasoning": ""}
+        return {
+            "text": r.get("text", ""),
+            "reasoning": r.get("reasoning", ""),
+            "prompt_tokens": 100,
+            "completion_tokens": int(r.get("n", 10) or 0),
+            "seconds": 1.0,
+            "prefill_s": 0.2,
+            "decode_s": 0.8,
+        }
+
+
+_orig_encode = QM.gguf_backend.encode_image_file
+QM.gguf_backend.encode_image_file = lambda p, s=0, **k: ("image/png", b"stub")
+
+
+def _gguf_tag(replies, think):
+    srv = _FakeGgufServer(replies)
+    nd = QM.Qwen35BatchImageTagger()
+    out = nd._tag_one_image_gguf(
+        srv, "stub.png", "sys", "user", 1024, 512, 0.2, think, 42, "raw", 0)
+    return srv, nd, out
+
+
+# O1 正文空 + 思考块非空 + 开着思考 -> 关掉思考重跑
+_srv, _nd, (_txt, _tok, _p, _d, _c) = _gguf_tag(
+    [{"text": "", "reasoning": "Let me look again...", "n": 600},
+     {"text": "1girl, silver_hair", "n": 30}], True)
+check("O1a 正文被思考挤空 -> 自动重跑，且第二次明确关掉思考",
+      len(_srv.calls) == 2
+      and _srv.calls[0].get("enable_thinking") is True
+      and _srv.calls[1].get("enable_thinking") is False,
+      str([c.get("enable_thinking") for c in _srv.calls]))
+check("O1b 交出去的是重跑那次的正文，不是空串", _txt == "1girl, silver_hair", repr(_txt))
+check("O1c token 记账把两次都算上（报的是真实消耗）", _tok == 630, str(_tok))
+check("O1d 实例上留下标记，供汇总行计数", _nd._think_retried is True)
+
+# O2 正文空但思考块也空 = 真 EOS -> 不该白跑第二次
+_srv, _nd, (_txt, _tok, _p, _d, _c) = _gguf_tag(
+    [{"text": "", "reasoning": "", "n": 1}, {"text": "不该出现", "n": 9}], True)
+check("O2 正文与思考块都空（真 EOS）-> 不重跑，也不假装成功",
+      len(_srv.calls) == 1 and _txt == "" and _nd._think_retried is False,
+      f"calls={len(_srv.calls)} text={_txt!r}")
+
+# O3 没开思考 -> 正常路径一次都不多跑
+_srv, _nd, (_txt, _tok, _p, _d, _c) = _gguf_tag(
+    [{"text": "", "reasoning": "x" * 50, "n": 5}], False)
+check("O3 没开思考 -> 不触发重跑（旧路径行为零改变）",
+      len(_srv.calls) == 1 and _nd._think_retried is False, f"calls={len(_srv.calls)}")
+
+# O4 正文非空 -> 思考块再长也不动
+_srv, _nd, (_txt, _tok, _p, _d, _c) = _gguf_tag(
+    [{"text": "1girl", "reasoning": "x" * 900, "n": 700}], True)
+check("O4 正文非空 -> 不重跑（思考块长不等于出错）",
+      len(_srv.calls) == 1 and _txt == "1girl" and _nd._think_retried is False,
+      f"calls={len(_srv.calls)} text={_txt!r}")
+
+QM.gguf_backend.encode_image_file = _orig_encode
+
+# O5 报告与提示：这次就是因为报告没显示开关状态，才没法从日志判断
+_src_tag = inspect.getsource(NODE.tag_folder)
+check("O5a 报告头写明思考模式开关状态", "思考模式    : " in _src_tag)
+check("O5b 报告里有「思考兜底」统计行（跑了几条被救回来）",
+      "思考兜底    : " in _src_tag)
+check("O5c 「输出为空」的提示会指向 enable_thinking（否则用户猜不到该关哪个开关）",
+      "enable_thinking" in _src_tag)
 
 # ---- 收尾 ----
 print()

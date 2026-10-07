@@ -324,6 +324,68 @@ llama-server 是**独立进程**，和 ComfyUI 抢同一块显存。第一次推
 （打标场景本来也不需要 SD 模型）—— 不做这步，llama-server 只能捡零头，
 然后就是上面说的「不报错、悄悄变慢」。
 
+但**光靠这一步不够**，有两个坑必须知道：
+
+**坑一：PyTorch 分配器攥着的空闲块，独立进程看不见。**
+
+Tensor 被释放后，PyTorch 不会立刻把显存还给驱动，而是留着自己的缓存池 ——
+在本进程里它是可复用的空闲显存，对 `llama-server` 却是**隐形的**：llama.cpp
+通过驱动查询空闲显存时看不到这部分。于是出现「ComfyUI 报告显存够、llama.cpp
+实际不够」，auto-fit 不报错，只把层摊到 CPU。
+
+所以节点在起 llama-server 之前会**无条件**再补一次 `gc.collect()` +
+`torch.cuda.empty_cache()`，并把回收量写进日志：
+
+```
+[Qwen35] 回收分配器缓存：驱动层可用显存 3.77GiB → 21.94GiB（其中 18.17GiB 是
+PyTorch 攥着但没在用、独立进程的 llama-server 看不见的部分）
+```
+
+这一步**不受 `unload_other_models` 开关影响** —— 它太便宜了（毫秒级、幂等），
+没有理由省。踩过一次：开关关着时，上一轮残留的 18GiB 没人回收，
+llama-server 28s 才就绪（干净环境 9.7s），日志里一个红字都没有。
+
+**坑二：ComfyUI 的 pinned memory 会锁死一大块内存，且不在本插件的账上。**
+
+日志里出现这行就说明踩上了：
+
+```
+Enabled pinned memory 26116.0
+```
+
+26116 MB ≈ **25.5 GiB 被 pin 死**（不可换页，直接从可用物理内存里扣）。
+这是 ComfyUI 的 async weight offloading 行为，发生在加载扩散模型时，
+**与本插件无关**，但足以让「内存可用」从 42GiB 掉到 19GiB。
+要它就得关掉 ComfyUI 的 pinned / async offload，或跑完重启 ComfyUI。
+
+### 6. 「跑第二次就卡内存、就变慢」怎么查
+
+这三个原因会造出**看起来一样**的症状，但归属完全不同。按这个顺序排：
+
+| 症状 | 先查什么 | 根因 | 归属 |
+|---|---|---|---|
+| 一批全部 `输出为空`、每张 27~29s | 报告头「思考模式」是不是**开** | `enable_thinking` 把 1024 tok 预算全烧在思考块上，正文一个字没轮到 | 本插件（已自动兜底重跑） |
+| 内存可用掉 20GiB 以上 | 日志有没有 `Enabled pinned memory` | ComfyUI 的 pinned 池 | ComfyUI |
+| 显存一直不还、下一轮 llama-server 启动明显变慢 | 轮次报告里有没有「释放后端」这行 | 释放时置空顺序写反了（见下） | 本插件（已修） |
+
+第三条值得展开，因为它最隐蔽 —— 分不清「引用没断」和「断得太晚」：
+
+```python
+# ✗ 错：empty_cache() 执行时 model 还活着，一个字节都放不掉
+self._release()                    # 内部 gc.collect() + empty_cache()
+model = processor = None
+
+# ✓ 对：先把本作用域的引用断掉，再让 _release() 去收
+model = processor = None
+self._release()
+gc.collect()
+torch.cuda.empty_cache()
+```
+
+错法下，等函数返回、引用真的断了，缓存块虽然变空闲，却**再没人调第二次
+`empty_cache()`** —— 于是 `nvidia-smi` 长期显示显存被占，而 `gc` 已经扫不到
+任何存活 tensor，看起来就像「引用都断干净了」，极易误判。
+
 ### 什么时候别用这条路
 
 - **ComfyUI-GGUF 插件不适用**：那是给扩散模型写的，它把 GGUF **反量化回浮点**再喂 torch。
@@ -334,6 +396,39 @@ llama-server 是**独立进程**，和 ComfyUI 抢同一块显存。第一次推
 
 走外部进程还有一个附带好处：llama-server 崩了拖不垮 ComfyUI，
 也可以单独开它的网页界面调参。
+
+### 开着 `enable_thinking` 会让正文变空
+
+GGUF 后端下**不要把 `enable_thinking` 打开**（打标节点上那个开关默认就是关的，别去动它）。
+原因是两个设置撞在一起：
+
+- 启动 llama-server 时带了 `--reasoning-format deepseek`，作用是把 think 块分流到独立的
+  `reasoning_content` 字段，`content` 里只剩正文 —— 这样日志和输出都干净；
+- 但混合思考模型一旦开始思考，会把整个 `max_new_tokens` 预算烧在推理上。预算见底时
+  `content` 就是空串，而 `strip_thinking("")` 仍然是空，这一张图就白跑了。
+
+本机 4090D + 27B `Q4_K_XL` 实测（`character` 预设 + refine + 带图 + 1024 tok 上限）：
+
+| `enable_thinking` | 输出 token | 单张耗时 | 结果 |
+|---|---|---|---|
+| 关 | 120 | 4.4s | 正文正常 |
+| 开 | 515 ~ 1024 | 39.9s | 约一半的图 `content` 为空 |
+
+**慢 9 倍、一半白跑**，换来的只是「模型想了想」。打标要的是描述，不是推理 —— 关掉。
+
+程序侧现在有两道保护：
+
+1. **自动重跑**：正文为空、但思考块非空、且开关确实是开的 —— 当场关掉思考重跑一次。
+   报告里会写「思考兜底 : N 条的正文被思考挤空，已自动关掉 enable_thinking 重跑，结果有效」。
+2. **失败信息点名病根**：万一重跑仍是空，报错会直接说「这一轮 enable_thinking 是开着的……
+   关掉它再跑」，而不是只丢一句「输出为空」让人猜。
+
+报告头现在也会打印一行 `思考模式 : 开/关` —— 之前没有这行，出问题时翻日志根本看不出
+开关到底动没动过。
+
+> 边缘情况：模板里判断思考的写法是 `{% if enable_thinking is undefined or enable_thinking is true %}`，
+> 也就是说**不传这个 kwarg 等于默认开启思考**。节点的 `chat()` 只在关思考时显式传
+> `{"enable_thinking": false}`，所以关是可靠的；开的时候则要靠模板自己的默认行为。
 
 ## 节点参数
 
@@ -611,11 +706,15 @@ E:\datasets\mydata\
 - **`max_new_tokens` 自动跟着抬。** `long` 档英文要 464 token，默认的 256 装不下，
   不抬就一定被硬截断。节点按「取两者较大值」处理，并在报告里写明抬到了多少。
 
-`desc_length=custom` 时在 `desc_words` 里填字数区间，四种写法都认：
+`desc_length=custom` 时在 `desc_words` 里填字数区间，这几种写法都认：
 
 ```
 60~150      60-150      60 到 150      60,150
 ```
+
+也可以只填一个数：`300` 或 `300 words` 都按「大约 300 词」理解，自动摊成 ±30%
+的区间（210~390）。早先只认区间，填单个数字会**静默退回 `preset`** —— 档位看着是
+生效的，实际一个字没改，只在报告末尾留一行很容易被忽略的小字。
 
 句数由字数自动反推（每句按 30~45 字算），所以不会出现「1 句写 250 字」这种挤成一坨的区间。
 填的东西解析不出来（比如只写了个 `80`）会**退回 `preset` 并在报告里说明** ——

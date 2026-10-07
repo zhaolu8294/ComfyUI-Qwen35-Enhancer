@@ -1539,6 +1539,53 @@ class Qwen35PromptEnhancer:
         return time.perf_counter() - t0
 
     # ----------------------------------------------------------------
+    def _hand_back_cached_vram(self, need_mib):
+        """把滞留在 PyTorch 分配器缓存里的显存还给驱动；不够就告警。
+
+        **为什么必须无条件调，不能挂在 unload_other_models 后面**：
+        GGUF 路径的推理后端是**独立进程** llama-server，它只看得到驱动层的
+        空闲显存；PyTorch 分配器里那些「Tensor 已经没了、但块还攥在手上」的
+        缓存对它完全是隐形的。于是「ComfyUI 看着显存够 → llama.cpp 实际不够」，
+        而 llama.cpp 的 auto-fit 不报错，只会安静把几层摊到 CPU：
+        显存白占、内存被吃光、速度掉一到两个数量级，三个症状一起来，
+        且日志里一个红字都没有。
+
+        empty_cache() 幂等、毫秒级，是这条链路上最便宜的保险。
+        真实复现：2026-10-07 现场日志里，第 1 轮 HF 结束后有约 18GiB 卡在分配器
+        缓存里没还给驱动（释放时置空顺序写反了），第 2 轮 llama-server 起来时
+        只剩零头可用 —— 28s 才就绪（干净环境下 9.7s），全程无报错。
+        """
+        if not torch.cuda.is_available():
+            return
+        try:
+            before, total = torch.cuda.mem_get_info()
+        except Exception:
+            return
+        reclaimed = 0
+        try:
+            gc.collect()
+            torch.cuda.empty_cache()
+            after, _ = torch.cuda.mem_get_info()
+            reclaimed = after - before
+        except Exception as e:
+            logger.debug(f"[Qwen35] empty_cache 失败（不致命）: {e}")
+            return
+        if reclaimed > 20 * 1024 * 1024:            # 20MiB 以下不值得说一句
+            logger.info(
+                f"[Qwen35] 回收分配器缓存：驱动层可用显存 {_fmt_gib(before)} → "
+                f"{_fmt_gib(after)}（其中 {_fmt_gib(reclaimed)} 是 PyTorch 攥着但"
+                f"没在用、独立进程的 llama-server 看不见的部分）"
+            )
+        if total and after < int(need_mib) * 1024 * 1024:
+            logger.warning(
+                f"[Qwen35] ⚠ 驱动层空闲显存 {_fmt_gib(after)} 低于本档约需的 "
+                f"{int(need_mib) / 1024:.1f}GiB。llama.cpp 不会因此报错，"
+                f"只会把一部分层摊到 CPU —— 速度掉 1~2 个数量级、内存还会被吃光。"
+                f"建议先关掉占显存的程序（出图/出视频节点、别的模型），"
+                f"或把「卸载其他模型」打开。"
+            )
+
+    # ----------------------------------------------------------------
     def _load(self, path, quantization, attention):
         global _CPU_OFFLOAD_GIB, _CUR_QUANT
         # 记录本次实际用的档位与 CPU 摊派量，供解码体检分层归因。
@@ -1852,33 +1899,63 @@ class Qwen35PromptEnhancer:
         时间分解取自 llama-server 响应里的 `timings`；拿不到时整段都算解码。
         """
         mime, blob = gguf_backend.encode_image_file(image_path, max_image_side)
-        r = server.chat(
-            system=str(system_prompt or "").strip(),
-            user=str(user_prompt or ""),
-            images=[(mime, blob)],
-            max_tokens=int(max_new_tokens),
-            # 采样参数与 transformers 路径对齐（top_p 0.9 / repeat_penalty 1.05）。
-            # temperature=0 在 llama.cpp 里就是贪心解码，打标要的就是可复现。
-            temperature=float(temperature),
-            top_p=0.9,
-            top_k=20,
-            min_p=0.0,
-            presence_penalty=0.0,
-            repeat_penalty=1.05,
-            seed=int(seed),
-            enable_thinking=bool(enable_thinking),
-        )
+
+        def _chat(think):
+            return server.chat(
+                system=str(system_prompt or "").strip(),
+                user=str(user_prompt or ""),
+                images=[(mime, blob)],
+                max_tokens=int(max_new_tokens),
+                # 采样参数与 transformers 路径对齐（top_p 0.9 / repeat_penalty 1.05）。
+                # temperature=0 在 llama.cpp 里就是贪心解码，打标要的就是可复现。
+                temperature=float(temperature),
+                top_p=0.9,
+                top_k=20,
+                min_p=0.0,
+                presence_penalty=0.0,
+                repeat_penalty=1.05,
+                seed=int(seed),
+                enable_thinking=bool(think),
+            )
+
+        self._think_retried = False
+        r = _chat(enable_thinking)
+        n_tok = int(r.get("completion_tokens") or 0)
+        t_pre = float(r.get("prefill_s") or 0.0)
+        t_dec = float(r.get("decode_s") or 0.0)
         text = strip_thinking(r["text"]).strip()
+
+        # ---- 思考挤空正文的兜底 -------------------------------------------
+        # llama-server 带 --reasoning-format 时会把 think 块分流进
+        # reasoning_content，content 里只剩正文。混合思考模型若把整个 token
+        # 预算都烧在思考上，content 就是**空串** —— 而 strip_thinking("") 仍是空，
+        # 这一张图就白跑了，报出来的还是「输出为空」这种指不到病根的错。
+        #
+        # 本机 27B Q4 实测（character 预设 + refine + 带图 + 1024 tok 上限）：
+        #   enable_thinking=False → 120 tok / 4.4s，正文正常
+        #   enable_thinking=True  → 515 tok / 39.9s，一半的图 content 为空
+        # 慢 9 倍、一半白跑，换来的只是「模型想了想」—— 打标要的是描述，不是推理。
+        # 所以这里**当场关掉思考重跑一次**。只有「开着思考 + 思考块非空 + 正文空」
+        # 三个条件同时成立才触发，正常路径不会多跑任何一次。
+        if not text and enable_thinking and str(r.get("reasoning") or "").strip():
+            self._think_retried = True
+            logger.warning(
+                "[Qwen35] 思考块吃光了预算（%d tok 全在 reasoning），"
+                "自动关掉 enable_thinking 重跑一次：%s",
+                n_tok, os.path.basename(str(image_path or "")),
+            )
+            r2 = _chat(False)
+            n_tok += int(r2.get("completion_tokens") or 0)
+            t_pre += float(r2.get("prefill_s") or 0.0)
+            t_dec += float(r2.get("decode_s") or 0.0)
+            text = strip_thinking(r2["text"]).strip()
+
         if str(output_format) != "raw":
             text = _normalize_tag_text(text)
         else:
             text = text.strip()
         text, cut = _truncate_output(text, max_chars)
-        return (text,
-                int(r.get("completion_tokens") or 0),
-                float(r.get("prefill_s") or 0.0),
-                float(r.get("decode_s") or 0.0),
-                cut)
+        return (text, n_tok, t_pre, t_dec, cut)
 
     def _enhance_gguf(self, backend, system_prompt, user_prompt, mode,
                       image, image_2, image_3, image_4, max_images, max_image_side,
@@ -2220,6 +2297,9 @@ class Qwen35PromptEnhancer:
             except BaseException:
                 pbar.finish()
                 if not keep_model_loaded:
+                    # 先断引用再释放（同文件末尾那处）。异常路径下 frame 会被
+                    # traceback 拽住，不置空的话权重会一直活到异常对象被丢掉。
+                    model = processor = None
                     self._release()
                 raise
             t_prefill_zh = pbar.prefill_s
@@ -2235,7 +2315,14 @@ class Qwen35PromptEnhancer:
         t_release = 0.0
         if not keep_model_loaded:
             t0 = time.perf_counter()
+            # 同 tag_folder：★ 必须先断本作用域的引用，再调 _release()。
+            # 反过来的话，_release() 里的 empty_cache() 是在权重还活着时执行的，
+            # 一个字节也放不掉；等函数返回引用真断了，又再没人调第二次。
+            model = processor = None
             self._release()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             t_release = time.perf_counter() - t0
 
         t_total = time.perf_counter() - t_start
@@ -3460,19 +3547,37 @@ _DESC_LEN_RE = re.compile(
 
 # custom 档的字数区间写法：60~150 / 60-150 / 60 到 150 / 60,150 都认
 _DESC_RANGE_RE = re.compile(r"^\s*(\d+)\s*[~～\-—－至到,，/]\s*(\d+)\s*$")
+# 单个数也认：用户想说的通常是「大约 300 words」，按 ±30% 摊成区间。
+_DESC_SINGLE_RE = re.compile(r"^\s*(\d+)\s*(?:words?|字|个词|词)?\s*$", re.I)
+_DESC_SINGLE_TOL = 0.3
 
 
 def _parse_word_range(spec):
-    """解析 custom 档填的字数区间。解析不出返回 None。"""
-    m = _DESC_RANGE_RE.match(str(spec or ""))
-    if not m:
-        return None
-    a, b = int(m.group(1)), int(m.group(2))
-    if a <= 0 and b <= 0:
-        return None
-    if b < a:
-        a, b = b, a
-    return a, b
+    """解析 custom 档填的字数区间。解析不出返回 None。
+
+    两个数的区间（60~150 / 60-150 / 60 到 150 / 60,150）照旧；
+    单个数（300）现在也认 —— 按 ±30% 摊成 210~390。
+
+    早先只认区间，用户填 300 会**静默退回 preset**：档位看着是生效的，
+    实际一个字没改，只在报告末尾留一行很容易被忽略的小字。
+    """
+    s = str(spec or "")
+    m = _DESC_RANGE_RE.match(s)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if a <= 0 and b <= 0:
+            return None
+        if b < a:
+            a, b = b, a
+        return a, b
+    m = _DESC_SINGLE_RE.match(s)
+    if m:
+        n = int(m.group(1))
+        if n <= 0:
+            return None
+        return (max(1, int(round(n * (1 - _DESC_SINGLE_TOL)))),
+                int(round(n * (1 + _DESC_SINGLE_TOL))))
+    return None
 
 
 def _sentences_for_words(w1, w2):
@@ -4452,6 +4557,12 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"  描述语言    : {run_desc}",
             f"  输出格式    : "
             + "、".join(f"{_lang_word(r.get('lang'))}={r['format']}" for r in runs),
+            f"  思考模式    : "
+            + ("开 —— 生成前先推理。GGUF 后端下很容易把正文挤空：llama-server 把 "
+               "think 分流到独立字段，预算烧完就只剩空串（实测 4.4s/次 → 39.9s/次）；"
+               "真挤空时会自动关掉重跑一次。打标建议直接关掉"
+               if bool(enable_thinking) else
+               "关 —— 直接出结果（推荐）"),
             f"  一轮自检    : "
             + ("开 —— 生成后再带图核验一轮，只改判错的部分（每张多一次推理）"
                if str(verify) == "once" else "关 —— 生成即定稿"),
@@ -4549,10 +4660,14 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             # llama-server 只能捡零头 —— llama.cpp 的 auto-fit 不会报错，
             # 只会安安静静把几层摊到 CPU，速度掉一到两个数量级。
             # 两边抢同一块显存，所以这一步在 GGUF 路径下比 HF 路径下更关键。
+            _gguf_need = self._gguf_need_mib(backend)
             t_unload = self._free_vram(
                 quantization, unload_other_models, pbar, _BW_UNLOAD,
-                need_mib=self._gguf_need_mib(backend),
+                need_mib=_gguf_need,
             )
+            # 无论上面那步有没有被 unload_other_models 挡住，都再还一次缓存：
+            # llama-server 是独立进程，看不见 PyTorch 分配器里攥着的空闲块。
+            self._hand_back_cached_vram(_gguf_need)
             gserver, backend_label, t_load = self._gguf_prepare(
                 backend, pbar, n_jobs, _BW_UNLOAD, _BW_LOAD
             )
@@ -4561,6 +4676,9 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
 
             # ---- 1/3 卸载其他模型 + 腾出显存（与扩写节点共用同一条链路）----
             t_unload = self._free_vram(quantization, unload_other_models, pbar, _BW_UNLOAD)
+            # 这一步和上面那步不重复：_free_vram 里的回收被 unload_other_models
+            # 挡住时不执行，而分配器缓存必须无条件还给驱动（见方法注释）。
+            self._hand_back_cached_vram(_VRAM_NEED_MIB.get(str(quantization), 9000))
 
             # ---- 2/3 加载模型：整个文件夹只加载这一次 ----
             t0 = time.perf_counter()
@@ -4602,6 +4720,17 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         n_cut = 0                           # 被字符上限截断的条数
         n_bak = 0                           # 新写出的 .orig 备份数
         n_ver = n_vfix = n_vbad = 0         # 自检：跑了几次 / 改动了几条 / 几次未生效
+        n_think = 0                         # 正文被思考挤空、自动关掉思考重跑的条数
+        # 「输出为空」的失败提示。开着思考 + GGUF 后端是最常见的成因：
+        # llama-server 的 --reasoning-format 把 think 分流进 reasoning_content，
+        # 预算烧完就没正文了 —— 光说「输出为空」用户根本猜不到该关哪个开关。
+        _empty_hint = ""
+        if bool(enable_thinking):
+            _empty_hint = (
+                "。这一轮 enable_thinking 是开着的 —— GGUF 后端下思考块会被"
+                "--reasoning-format 分流到独立字段，预算若全花在思考上，正文只会是空的。"
+                "关掉 enable_thinking 再跑（HF 后端不受此影响）"
+            )
         t_tag_total = 0.0
         first_prefill = None
         failures, examples = [], []
@@ -4653,6 +4782,8 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                             float(temperature), bool(enable_thinking),
                             int(seed) + idx, r["format"], int(max_output_chars),
                         )
+                        if getattr(self, "_think_retried", False):
+                            n_think += 1
                     else:
                         text, n_tok, t_pre, t_dec, cut = self._tag_one_image(
                             model, processor, src, r["prompt"], u_prompt,
@@ -4663,6 +4794,7 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                     if not text:
                         raise RuntimeError(
                             "输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
+                            + _empty_hint
                         )
 
                     # ---- 一轮带图自检 ----
@@ -4774,7 +4906,19 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 # 约 19GB 显存，后面出图/出片的节点就没显存了。
                 gguf_backend.release()
             else:
+                # ★ 顺序不能反，这是本 bug 的关键。
+                # _release() 内部是 del self._cache[...] → gc.collect() → empty_cache()。
+                # 只要本作用域的 model / processor 还指着那 18GiB 权重，gc 就收不走，
+                # empty_cache() 也一个字节都放不掉（那些块还被判为「在用」）。
+                # 等函数返回、引用真的断了，块虽然变空闲，却再没人调一次 empty_cache()
+                # 把它们还给驱动 —— 于是 nvidia-smi 长期显示只剩 3.7GiB 可用，
+                # 而 gc 已经扫不到任何存活 tensor，看起来就像「引用都断干净了」。
+                # 实测（diagnose_mem_twice.py）：顺序反了 → 卡 3.7GiB；先断引用 → 22.4GiB。
+                model = processor = None
                 self._release()
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             t_release = time.perf_counter() - t0
 
         t_total = time.perf_counter() - t_start
@@ -4797,6 +4941,11 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             lines.append(
                 f"  一轮自检    : 跑了 {n_ver} 次，{n_vfix} 条被修正"
                 + (f"，{n_vbad} 次未生效（已保留原稿）" if n_vbad else "")
+            )
+        if n_think:
+            lines.append(
+                f"  思考兜底    : {n_think} 条的正文被思考块挤空，已自动关掉 "
+                f"enable_thinking 重跑，结果有效（想省掉这次重跑就把思考关掉）"
             )
         if n_cut:
             lines.append(
