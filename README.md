@@ -31,8 +31,10 @@ MiniMax H3 对提示词格式有硬性要求：
 
 - **架构自动适配** —— 用 `AutoModelForImageTextToText`，同一份代码同时支持
   `Qwen3_5ForConditionalGeneration` 与 `Qwen3VLForConditionalGeneration`，换模型不用改代码
-- **模型自动发现** —— 扫描 `models/text_encoders`、`models/prompt_generator`、`models/LLM`
-  下所有含 `config.json` 的完整 HF 文件夹，自动过滤 Florence-2 / CLIP / T5 等非对话架构
+- **模型自动发现** —— 扫描所有含 `config.json` 的完整 HF 文件夹，自动过滤
+  Florence-2 / CLIP / T5 等非对话架构。搜索范围**可扩展**（模型换到别的盘也能找到，
+  见 [模型放在别的盘？](#模型放在别的盘comfyui-目录里放不下时)）；显示名取文件夹名，
+  所以模型挪位置后下拉里的名字不变，**旧工作流不用改**
 - **多图参考** —— `image` / `image_2` / `image_3` / `image_4` 最多 4 路输入（每路可为 batch），
   按接入顺序编号，与 H3 的 `<Picture 1>`..`<Picture N>` 严格对齐
 - **思考块自动处理** —— 先嗅探 processor 的 chat template 是否真的认 `enable_thinking`
@@ -237,6 +239,34 @@ python devtools/pin_comfyui_pcores.py --restore  # 还原
 > 节点只会扫描带 `config.json` 的文件夹。`models/text_encoders/` 下那些
 > 单个 `*.safetensors`（给扩散模型当 text encoder 用的）**不会**出现在下拉列表里，这是正常的。
 
+#### 模型放在别的盘？（ComfyUI 目录里放不下时）
+
+24GB 卡跑 9B 级模型，E 盘常常腾不出 20GB —— 把模型挪到 H/F 盘是常规操作。
+**挪走之后下拉框不会变空**，插件会扫这些地方：
+
+| 来源 | 说明 |
+|---|---|
+| `ComfyUI/models/{text_encoders,prompt_generator,LLM}` | 自带落点 |
+| `extra_model_paths.yaml` 里给 `text_encoders` 配的目录 | ComfyUI 官方机制，自动带上 |
+| `H:/F:/J:/G:/D:` 下的 `AI\models`、`AI\models\LLM`、`AI\LLM` | 与 GGUF 侧同一套盘符约定，两边对称 |
+| 插件目录下的 `model_dirs.txt` | **任意位置都行**，一行一个目录（首次运行自动生成一份带说明的模板） |
+| 环境变量 `QWEN35_MODEL_DIRS` | 同上，分号 / 逗号分隔 |
+
+写**父目录**即可（会往下找最多 3 层），目录本身就是模型文件夹也一样认。
+改完**必须重启 ComfyUI** —— 下拉选项在节点注册时固定，热改不生效。
+
+显示名取的是**文件夹名**，与放在哪个盘无关：模型从 `models/text_encoders/` 挪到
+`H:\AI\models\LLM\` 之后，旧工作流里存的名字**依然是合法选项**，直接能跑。
+
+> **为什么这件事必须做对**：ComfyUI 会在**节点执行之前**校验下拉值是否在选项
+> 列表里，不在就直接 `value_not_in_list` 拒绝执行 —— 那时你填的
+> `custom_model_path` 再正确也**根本跑不到**。所以「模型挪走后下拉里还有没有它」
+> 比「路径填得对不对」更关键。
+
+`custom_model_path` 仍然可用，而且现在**填错会说清楚错在哪**（路径不存在 /
+不是文件夹 / 没有 `config.json` / 填成了单个权重文件），不再悄悄改用下拉框里
+那个名字。另外它会自动剥掉从资源管理器复制来的中英文引号，粘了就认。
+
 ### 2. MiniMax H3 视频模型
 
 | 目录 | 文件 |
@@ -338,6 +368,14 @@ python devtools/pin_comfyui_pcores.py --restore  # 还原
 
 > `backend` 是**可选输入线**：不连的节点完全走原来的 transformers 路径，
 > 行为一个字节都没变 —— 旧工作流不用改。
+
+**连上之后，扩写 / 打标节点上的 `model_name` 和 `custom_model_path` 会自动折叠隐藏。**
+这两个控件只对 HF（transformers）那条路有意义 —— 走 llama-server 时选了也不生效，
+留在画布上只会让人犯嘀咕「到底听谁的」。断开连线它们就自己回来。
+
+> 隐藏是**纯视觉折叠**（`computeSize` 返回 0 高度），`node.widgets` 数组的顺序和
+> 长度一个都不动 —— 所以 `widgets_values` 序列化结果不变，旧工作流打开后
+> 所有控件的值仍然对位。这一条有专门的回归测试守着（`devtools/test_qwen35_webui.py`）。
 
 ### 4. 实测
 
@@ -504,7 +542,7 @@ seed，所以直接把它关掉，结果一样、只花约 1/5 的时间。
 | `temperature` | `0.4` | 采样温度 |
 | `max_new_tokens` | `1024` | 输出长度上限 |
 | `seed` | `42` | 随机种子 |
-| `custom_model_path` | 空 | 兜底：手填模型文件夹绝对路径 |
+| `custom_model_path` | 空 | 兜底：手填模型文件夹绝对路径。**填错会明确报错**（不再静默回落到下拉框）；自动剥引号、也能直接粘权重文件（取父目录）。模型统一放别处建议改用 `model_dirs.txt`，见[「模型放在别的盘？」](#模型放在别的盘comfyui-目录里放不下时)。连上 GGUF 后端时本控件会隐藏 |
 | `max_image_side` | `1536` | 参考图长边上限，超出则等比缩小（`0` = 不限制）。1536 比 1280 只多约 44% 的图片 token，小物件却认得更准 |
 | `show_progress` | `True` | 是否上报进度（前端进度条 + 控制台进度行） |
 | `progress_interval` | `2.0` | 控制台进度行的最小间隔（秒）；终端实时条不受它限制 |

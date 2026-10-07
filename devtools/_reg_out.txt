@@ -1,4 +1,9 @@
-########## test_qwen35_v6_bilingual.py ##########
+################ test_qwen35_v6_bilingual.py ################
+  [OK ] 真机 8bit（195 tok / 15.72s）现在会被判为慢
+  [OK ] 真机 4bit（286 tok / 16.51s）不会被误报
+  [OK ] 加载期 8bit 提示带真机整轮对照（71.01 / 54.06）
+  [OK ] 加载期提示点明 14.3s 是加载开销
+  [OK ] 加载期提示仍保留 llm_int8_threshold 与 4bit 指向
   [OK ] 模块 docstring 已换成真机三档对照
   [OK ] 「8bit 解码慢 3~8 倍」这个旧说法已从源码里清掉
   [OK ] 8bit 主因命中 → 只给 1 条（压掉 fla 建议）  -> 1
@@ -7,12 +12,11 @@
   [OK ] 4bit 慢时两条都给（fla 建议不被压）  -> 2
 
 ==========================================================================
-存在 3 项问题:
-   - widgets 总数 = 18
-   - 签名与 widgets 顺序一致
-   - 提示里含实测 ms/层 与 fla 指引
+全部通过
 
-########## test_qwen35_tagger.py ##########
+################ test_qwen35_tagger.py ################
+  [OK ] O1c token 记账把两次都算上（报的是真实消耗）  -> 630
+  [OK ] O1d 实例上留下标记，供汇总行计数
   [OK ] O2 正文与思考块都空（真 EOS）-> 不重跑，也不假装成功  -> calls=1 text=''
   [OK ] O3 没开思考 -> 不触发重跑（旧路径行为零改变）  -> calls=1
   [OK ] O4 正文非空 -> 不重跑（思考块长不等于出错）  -> calls=1 text='1girl'
@@ -20,8 +24,41 @@
   [OK ] O5b 报告里有「思考兜底」统计行（跑了几条被救回来）
   [OK ] O5c 「输出为空」的提示会指向 enable_thinking（否则用户猜不到该关哪个开关）
 
-  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger___ty087w
+  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_g3evydfn
   已清理临时目录
 
 ==========================================================================
 全部通过
+
+################ verify_h3_workflows.py ################
+        folder_path=''  preset='custom'  quantization='none'  overwrite='skip'  format='tags_one_line'
+        bilingual='off'  max_output_chars=0
+        caption_mode='off'
+        输出端口: ['report', 'tagged']
+  PreviewAny id=2  上游 link=[1]
+    （上游是 Qwen35BatchImageTagger，接第 1 个输出，跳过该检查）
+  连线摘要:
+    [1] Qwen35BatchImageTagger(1).0 -> PreviewAny(2).0  (STRING)
+
+  结构校验全部通过
+  note: BatchTagger 的 folder_path 还是空的，跑之前必须先填
+
+======================================================================
+总问题数: 0
+
+################ verify_qwen35_patch.py ################
+  [OK ] kernel==stride、padding=0、groups=1 的 Conv3d 判为等价
+  [OK ] 非 Conv3d 一律不等价
+  [OK ] 结构守卫：名字像 patch_embed 但卷积不够格的模块不会被替换
+  [OK ] 名字守卫：类名不含 patchembed 的模块一律不碰
+
+==========================================================================
+C) GPU 实测：真实形状下 Conv3d bf16 vs GEMM bf16
+==========================================================================
+  conv : 超过 60s 没返回（挂死）
+  gemm :      0.259 ms
+  [OK ] Conv3d bf16 挂死而 GEMM 正常 —— 病态路径复现在 Qwen3.5 上  -> conv=挂死 gemm=0.26ms
+
+==========================================================================
+全部通过
+

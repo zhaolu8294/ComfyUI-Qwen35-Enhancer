@@ -25,6 +25,10 @@ env/
 *.txt.orig
 *.txt.q35state
 
+# 本机的模型目录清单（插件首次运行会生成一份模板，填的是本机绝对路径，
+# 不该跟着仓库走；机制见 model_dirs.txt 里的注释与 README）
+model_dirs.txt
+
 # 编辑器 / 系统
 .vscode/
 .idea/

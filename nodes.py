@@ -131,15 +131,40 @@ logger = logging.getLogger("Qwen35Enhancer")
 # ---------------------------------------------------------------------------
 # 搜索路径：ComfyUI 默认只注册了 text_encoders，prompt_generator 要自己拼
 # ---------------------------------------------------------------------------
+# **为什么这块是「动态 + 多来源」而不是一个写死的列表**：
+# 24GB 卡上跑 9B 级模型时 E 盘往往放不下，把模型挪到别的盘是常态。挪走之后
+# 如果插件只认 ComfyUI 自带的三个目录，下拉框就会变成空的，旧工作流里存着的
+# 模型名也不再是合法选项 —— ComfyUI 会在**节点执行之前**就报 value_not_in_list，
+# 于是「自定义路径」填得再对也用不上（根本跑不到那一步）。这是 2026-10-08
+# 用户实际踩的坑。所以这里把「模型能放在哪」做成可配置，并复用 GGUF 侧已经在用
+# 的那套盘符约定，保持两边对称。
 MODELS_DIR = getattr(folder_paths, "models_dir", None) or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models"
 )
 
-SEARCH_DIRS = [
-    os.path.join(MODELS_DIR, "text_encoders"),
-    os.path.join(MODELS_DIR, "prompt_generator"),
-    os.path.join(MODELS_DIR, "LLM"),
-]
+# ComfyUI 自带的三个落点。text_encoders 是官方注册的，另两个是本插件的历史约定。
+_BASE_SEARCH_SUBDIRS = ("text_encoders", "prompt_generator", "LLM")
+
+# 兼容旧名：老脚本 / 探针可能引用 SEARCH_DIRS。这是「内置三项」的快照，
+# 不再代表真实搜索范围（真实范围见 _model_search_dirs()）。
+SEARCH_DIRS = [os.path.join(MODELS_DIR, s) for s in _BASE_SEARCH_SUBDIRS]
+
+# 扫多少层。1 层只够覆盖「根目录下直接就是模型文件夹」；
+# 3 层能覆盖 `H:\AI\models\LLM\<模型>` 这种「父目录 / 分类目录 / 模型」的常见摆法。
+_MODEL_SCAN_DEPTH = 3
+
+# 扫描时跳过的目录名：进这些目录纯属浪费时间，还可能扫出一堆假候选
+SKIP_SCAN_DIRS = frozenset({
+    "__pycache__", ".git", ".cache", "node_modules", "site-packages",
+    ".venv", "venv", "dist-info",
+})
+
+# 用户可编辑的额外目录清单（一行一个，支持 # 注释）。
+# 放在插件目录里，改完重启 ComfyUI 即生效 —— 比让用户去翻环境变量或 yaml 直观。
+MODEL_DIRS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_dirs.txt")
+
+# 与 GGUF 侧（gguf_backend._BINARY_ROOTS）同一套盘符约定，保持两边对称。
+_EXT_ROOTS = ("H", "F", "J", "G", "D")
 
 # 过滤掉的"文本编码器"目录名（这些是给 diffusion 用的，没有 lm_head / 不是对话模型）
 SKIP_DIR_HINTS = (
@@ -156,35 +181,187 @@ SKIP_DIR_HINTS = (
 SKIP_ARCH_HINTS = ("Florence", "Whisper", "CLIP", "T5", "Siglip", "Bert")
 
 
-def discover_local_models():
-    """扫描所有含 config.json 的完整 HF 模型文件夹，返回 {显示名: 绝对路径}"""
-    found = {}
-    for base in SEARCH_DIRS:
-        if not os.path.isdir(base):
+def _split_dir_list(text):
+    """把用户写的一行拆成目录列表。分号 / 逗号 / 换行都当分隔符。"""
+    out = []
+    for chunk in str(text or "").replace(";", "\n").replace(",", "\n").splitlines():
+        s = chunk.strip().strip('"').strip("'")
+        if s and not s.startswith("#"):
+            out.append(s)
+    return out
+
+
+_MODEL_DIRS_TEMPLATE_HEAD = """\
+# 模型搜索目录（一行一个）
+# ---------------------------------------------------------------------------
+# 这个文件用来告诉插件「HF 模型还放在哪些目录」。
+#
+# 什么时候需要改：把模型挪到别的盘之后（24GB 卡跑 9B 级模型时 E 盘常常放不下），
+# 如果新位置不在下面这些默认范围里，就在这里加一行，重启 ComfyUI，模型就会
+# 重新出现在节点的下拉框里 —— 旧工作流不用改。
+#
+# 默认已经会扫（**不用**在这里重复写）：
+#   · ComfyUI 的 models\\text_encoders、models\\prompt_generator、models\\LLM
+#   · extra_model_paths.yaml 里给 text_encoders 配的目录
+#   · H:/F:/J:/G:/D: 下的 AI\\models、AI\\models\\LLM、AI\\LLM
+#     （与 GGUF 侧同一套盘符约定，两边对称）
+#
+# 规则：
+#   · 一行一个目录；空行和 # 开头的行会被忽略；分号 / 逗号也能当分隔符
+#   · 写在模型的**父目录**即可，插件会往下找最多 3 层；目录本身就是模型
+#     文件夹（里面直接有 config.json）也可以
+#   · 改完**必须重启 ComfyUI** —— 下拉选项在节点注册时就固定了，热改不生效
+#   · 不想编辑文件的话，环境变量 QWEN35_MODEL_DIRS 等价，多个用分号隔开
+#
+# 例子（把开头的 # 去掉即可生效）：
+# Z:\\models\\LLM
+# F:\\AI\\models\\qwen
+"""
+
+
+def _write_model_dirs_template():
+    """首次运行时生成一份带说明的空模板，方便用户直接编辑。
+
+    与 presets/*.json 的处理方式一致：**文件归用户**，只在不存在时创建一次，
+    之后绝不覆盖 —— 里面可能有用户手写的路径。
+    """
+    try:
+        with open(MODEL_DIRS_FILE, "w", encoding="utf-8", newline="\n") as f:
+            f.write(_MODEL_DIRS_TEMPLATE_HEAD)
+        logger.info(
+            f"[Qwen35] 已生成模型目录清单模板：{MODEL_DIRS_FILE}"
+            f"（模型放在非常规位置时在这里加一行，重启后生效）"
+        )
+    except Exception as e:                                    # pragma: no cover
+        logger.debug(f"[Qwen35] 生成 {os.path.basename(MODEL_DIRS_FILE)} 失败: {e}")
+
+
+def _model_dirs_from_file():
+    """读插件目录下的 model_dirs.txt；不存在就先生成一份空模板。"""
+    try:
+        if not os.path.isfile(MODEL_DIRS_FILE):
+            _write_model_dirs_template()
+            return []
+        with open(MODEL_DIRS_FILE, "r", encoding="utf-8-sig") as f:
+            return _split_dir_list(f.read())
+    except Exception as e:                                    # pragma: no cover
+        logger.warning(f"[Qwen35] 读 {os.path.basename(MODEL_DIRS_FILE)} 失败: {e}")
+        return []
+
+
+def _model_search_dirs():
+    """所有要扫的根目录，按优先级去重排序。
+
+    来源（顺序 = 优先级，同名模型**先扫到的赢**，这样内置目录保持稳定）：
+      1. 环境变量 `QWEN35_MODEL_DIRS`（分号 / 逗号 / 换行分隔）
+      2. 插件目录下 `model_dirs.txt`
+      3. ComfyUI 自带 `models/{text_encoders,prompt_generator,LLM}`
+      4. `folder_paths` 注册的 text_encoders 路径 —— **自动包含
+         `extra_model_paths.yaml` 里配的目录**，想用 ComfyUI 官方机制也行
+      5. 与 GGUF 侧同一套约定：H:/F:/J:/G:/D: 下的 `AI\\models`、`AI\\models\\LLM`、`AI\\LLM`
+
+    每次调用都重算：用户加了目录，重启 ComfyUI 就能看到（COMBO 选项在节点
+    注册时就固定了，所以「不重启就生效」做不到，这点在 README 里写明了）。
+    """
+    dirs = []
+    dirs += _split_dir_list(os.environ.get("QWEN35_MODEL_DIRS"))
+    dirs += _model_dirs_from_file()
+    dirs += [os.path.join(MODELS_DIR, s) for s in _BASE_SEARCH_SUBDIRS]
+    try:
+        dirs += list(folder_paths.get_folder_paths("text_encoders"))
+    except Exception:
+        pass
+    for drive in _EXT_ROOTS:
+        root = os.path.join(drive + ":", os.sep, "AI")
+        dirs.append(os.path.join(root, "models"))
+        dirs.append(os.path.join(root, "models", "LLM"))
+        dirs.append(os.path.join(root, "LLM"))
+
+    out, seen = [], set()
+    for d in dirs:
+        if not d:
             continue
-        for name in sorted(os.listdir(base)):
-            full = os.path.join(base, name)
-            if not os.path.isdir(full):
+        try:
+            norm = os.path.abspath(os.path.expanduser(d))
+        except Exception:
+            continue
+        key = os.path.normcase(norm)
+        if key in seen or not os.path.isdir(norm):
+            continue
+        seen.add(key)
+        out.append(norm)
+    return out
+
+
+def _iter_hf_dirs(base, max_depth=_MODEL_SCAN_DEPTH):
+    """在 base 下（含 base 自身）找含 config.json 的目录。
+
+    找到就**不再往里钻** —— HF 模型目录里不会有嵌套的模型；再往下走只会
+    撞见 `pytorch_model.bin` 之类的噪音。深度上限是为了防用户把整块盘
+    当根写进来（那种情况扫完要很久）。
+    """
+    root = os.path.abspath(base)
+    base_depth = root.rstrip("\\/").count(os.sep)
+    stack = [root]
+    while stack:
+        cur = stack.pop()
+        if os.path.isfile(os.path.join(cur, "config.json")):
+            yield cur
+            continue
+        try:
+            if cur.rstrip("\\/").count(os.sep) - base_depth >= max_depth:
                 continue
-            cfg_path = os.path.join(full, "config.json")
-            if not os.path.isfile(cfg_path):
+            entries = sorted(os.listdir(cur))
+        except (OSError, PermissionError):
+            continue
+        for name in entries:
+            full = os.path.join(cur, name)
+            if name.lower() in SKIP_SCAN_DIRS or not os.path.isdir(full):
                 continue
+            stack.append(full)
+
+
+# 扫描结果的短缓存。为什么要它：**不要再让「扫盘」出现在每次执行的热路径上**。
+# 加了外部模型目录之后（比如把整块 `H:\AI\models` 写进清单），一次递归扫描
+# 可能要跑几百个目录 —— 而 _resolve_path 是每次执行都要调的。
+# 60 秒足够短到「新加的目录很快被看到」，又足够长到「同一批任务只扫一次」。
+_DISCOVER_CACHE = {"t": 0.0, "val": {}}
+_DISCOVER_TTL = 60.0
+
+
+def discover_local_models(force=False):
+    """扫描所有含 config.json 的完整 HF 模型文件夹，返回 {显示名: 绝对路径}。
+
+    显示名用**目录名**而不是路径，所以模型换个盘放，标签不变 —— 旧工作流
+    里存的 `model_name` 会自动重新变成合法选项，不用手动改。
+    """
+    now = time.time()
+    if (not force and _DISCOVER_CACHE["val"]
+            and now - _DISCOVER_CACHE["t"] < _DISCOVER_TTL):
+        return dict(_DISCOVER_CACHE["val"])
+
+    found = {}
+    for base in _model_search_dirs():
+        for full in _iter_hf_dirs(base):
+            name = os.path.basename(full.rstrip("\\/"))
             # 过滤明显不是对话模型的目录
             lowered = name.lower()
             if any(h.lower() in lowered for h in SKIP_DIR_HINTS):
                 continue
             try:
-                with open(cfg_path, "r", encoding="utf-8") as f:
+                with open(os.path.join(full, "config.json"), "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 arch = (cfg.get("architectures") or ["?"])[0]
-                mtype = cfg.get("model_type", "?")
             except Exception:
-                arch, mtype = "?", "?"
+                arch = "?"
             # 过滤 caption / 编码器类架构（不是对话模型）
             if any(h.lower() in arch.lower() for h in SKIP_ARCH_HINTS):
                 continue
             label = f"{name}  [{arch}]"
-            found[label] = full
+            found.setdefault(label, full)      # 先扫到的赢 = 内置目录优先
+
+    _DISCOVER_CACHE["t"] = now
+    _DISCOVER_CACHE["val"] = dict(found)
     return found
 
 
@@ -1468,11 +1645,76 @@ class Qwen35PromptEnhancer:
     OUTPUT_NODE = True
 
     # ----------------------------------------------------------------
+    @staticmethod
+    def _inspect_hf_dir(raw):
+        """把一个「自定义路径」字符串看明白，返回 (可用目录 或 None, 失败原因 或 None)。
+
+        **故意不静默回落**：路径填错就当场说清楚错在哪。上一版是「无效就默默
+        改用 model_name」，于是用户看到的是「找不到模型 '老名字'」—— 指的还是
+        下拉框里那个名字，完全猜不到是自己填的路径有问题。2026-10-08 就是被
+        这条误导了半天。
+
+        容错（都是实际会遇到的粘贴形态）：首尾空白、从资源管理器复制来的
+        中英文引号、正/反斜杠混用、直接粘了某个权重文件而不是文件夹。
+        """
+        s = str(raw or "").strip()
+        for q in ('"', "'", "\u201c", "\u201d", "\u2018", "\u2019"):
+            s = s.strip(q)
+        s = s.strip()
+        if not s:
+            return None, None                     # 空 -> 不算错，走 model_name 那条路
+
+        p = os.path.expanduser(s)
+        if not os.path.exists(p):
+            return None, f"路径不存在：{p}"
+
+        if os.path.isfile(p):
+            # 直接粘了权重文件（.safetensors/.bin/.gguf）—— 很常见的操作，
+            # 顺手取它的父目录；父目录是模型文件夹就当作是它。
+            parent = os.path.dirname(p)
+            if os.path.isfile(os.path.join(parent, "config.json")):
+                return parent, None
+            return None, (f"填的是一个文件（{os.path.basename(p)}），这里要的是"
+                          f"**模型文件夹**；它的父目录 {parent} 里也没有 config.json。")
+
+        if not os.path.isdir(p):
+            return None, f"既不是文件也不是文件夹：{p}"
+
+        if os.path.isfile(os.path.join(p, "config.json")):
+            return p, None
+
+        # 目录在、但没有 config.json —— 最常见的两种情况：多套了一层，
+        # 或者把「一堆模型的父目录」填进来了。两种都给出可执行的指引。
+        try:
+            subs = [os.path.join(p, n) for n in sorted(os.listdir(p))]
+        except OSError as e:
+            return None, f"读不到目录内容：{p}（{e}）"
+        cand = [c for c in subs
+                if os.path.isdir(c) and os.path.isfile(os.path.join(c, "config.json"))]
+        if len(cand) == 1:
+            return cand[0], None                  # 多套了一层，自动往下走一级
+        if len(cand) > 1:
+            names = "、".join(os.path.basename(c) for c in cand[:5])
+            return None, (f"{p} 下面有多个模型（{names}…），请直接填到具体那一个，"
+                          f"或改用 model_dirs.txt 把 {p} 整个加进搜索目录。")
+        return None, (f"{p} 里没有 config.json —— 不是完整的 HF 模型文件夹"
+                      f"（完整的应含 config.json + 权重 + tokenizer）。")
+
     def _resolve_path(self, model_name, custom_model_path):
-        if custom_model_path and custom_model_path.strip():
-            p = custom_model_path.strip().strip('"')
-            if os.path.isdir(p) and os.path.isfile(os.path.join(p, "config.json")):
-                return p
+        custom, why = self._inspect_hf_dir(custom_model_path)
+        if custom:
+            return custom
+        if why:
+            raise RuntimeError(
+                f"custom_model_path 无效：{why}\n"
+                f"提示：这里填**含 config.json 的模型文件夹**绝对路径，例如 "
+                f"H:\\AI\\models\\LLM\\huihui-ai_Huihui-Qwen3.5-9B-abliterated\n"
+                f"如果模型已经统一挪到别的盘（比如 H 盘），更省事的两个做法：\n"
+                f"  ① 在插件目录下的 model_dirs.txt 里写一行那个目录；\n"
+                f"  ② 设环境变量 QWEN35_MODEL_DIRS（分号分隔多个）。\n"
+                f"这之后下拉框会直接列出它们，custom_model_path 就可以留空了。"
+            )
+
         mapping = discover_local_models()
         if model_name in mapping:
             return mapping[model_name]
@@ -1480,9 +1722,16 @@ class Qwen35PromptEnhancer:
         for k, v in mapping.items():
             if k.startswith(model_name):
                 return v
+        # 报错时把「扫过哪些目录」列出来 —— 用户能据此判断模型是不是放偏了
+        tried = _model_search_dirs()
+        detail = "；".join(tried[:6]) + ("；…" if len(tried) > 6 else "")
         raise RuntimeError(
-            f"找不到模型 '{model_name}'。请确认它是含 config.json 的完整 HF 文件夹，"
-            f"或在上面的 custom_model_path 里填绝对路径。"
+            f"找不到模型 '{model_name}'。\n"
+            f"已扫描 {len(tried)} 个目录：{detail}\n"
+            f"三个办法任选：① 确认它是含 config.json 的完整 HF 文件夹；"
+            f"② 在 custom_model_path 里填它的绝对路径；"
+            f"③ 把它的父目录写进插件目录下的 model_dirs.txt（重启 ComfyUI 后"
+            f"从下拉里选它）。"
         )
 
     # ----------------------------------------------------------------
