@@ -324,7 +324,7 @@ print("  widgets 顺序:")
 for _i, _k in enumerate(order):
     print(f"    [{_i:>2}] {_k}")
 print(f"  连线输入（不占 widget 位）: {_line_inputs}")
-check("widgets 总数 = 30（backend 是连线输入，不计数）", len(order) == 30, str(len(order)))
+check("widgets 总数 = 31（backend 是连线输入，不计数）", len(order) == 31, str(len(order)))
 check("连线输入只有 backend", _line_inputs == ["backend"], str(_line_inputs))
 check("backend 是可选输入，类型 QWEN35_BACKEND",
       it["optional"].get("backend") == ("QWEN35_BACKEND",),
@@ -336,8 +336,8 @@ sig = [p for p in inspect.signature(NODE.tag_folder).parameters.keys()
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
 check("新增控件**一律追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
-      order[-5:] == ["bilingual", "max_output_chars", "caption_mode",
-                     "desc_length", "desc_words"], str(order[-5:]))
+      order[-5:] == ["max_output_chars", "caption_mode", "desc_length",
+                     "desc_words", "bilingual_sync"], str(order[-5:]))
 
 check("folder_path 不是多行框（路径不该用多行输入）",
       it["required"]["folder_path"][1].get("multiline") is False)
@@ -1417,8 +1417,8 @@ h38 = Harness()
 try:
     r38 = h38.run(D33, system_preset="photoreal", caption_mode="refine_or_new", dry_run=True)
     rep38 = r38["result"][0]
-    check("dry_run(refine)：清单标出「校订已有初稿」与「从零补写」",
-          "校订已有初稿" in rep38 and "从零补写" in rep38)
+    check("dry_run(refine)：清单标出「校订原有」与「从零补写」",
+          "校订原有" in rep38 and "从零补写" in rep38)
     check("dry_run(refine)：不加载模型、不写文件",
           h38.loads == 0 and not os.path.exists(QM._txt_path_for(paths33[1])))
     check("dry_run(refine)：报告写明模式", "打标模式" in rep38 and "优化已有打标" in rep38)
@@ -2145,6 +2145,297 @@ check("L8c 报告头会写明当前长度档位（否则用户看不出档位到
       "描述长度    : " in _hs_src)
 check("L8d 长度档位与字符上限冲突时会提醒（long 档 + max_output_chars=80 是自相矛盾）",
       "比长度档位的下限" in _hs_src)
+
+# ===========================================================================
+section("M) 双语互同步（改中文 -> 自动回灌英文；反向也认）")
+# ===========================================================================
+
+# ---- M1 同步指令：预设自带优先，否则按**目标语言**回落 ----
+check("M1a 同步指令：预设自带 sync_prompt 最优先",
+      QM._sync_instruction({"lang": "en", "sync_prompt": "MY-SYNC"}) == "MY-SYNC")
+check("M1b 目标是英文 -> 回落英文常量，且写明「这是翻译，不是改编」",
+      "translation, not a revision" in QM._sync_instruction({"lang": "en"}))
+check("M1c 目标是中文 -> 回落中文常量",
+      "翻译，不是改编" in QM._sync_instruction({"lang": "zh"}))
+check("M1d 两份都把「一一对应」与「不许顺手纠正」写死（不丢改动的关键就在这两句）",
+      "Add nothing, drop nothing" in QM._SYNC_INSTRUCTION
+      and 'do not "correct"' in QM._SYNC_INSTRUCTION
+      and "不增加、不删减" in QM._SYNC_INSTRUCTION_ZH
+      and "顺手纠正" in QM._SYNC_INSTRUCTION_ZH)
+check("M1e 与校订指令同口径：翻译这道工序也不许把 NSFW 洗掉",
+      "Never sanitise" in QM._SYNC_INSTRUCTION and "不要消毒" in QM._SYNC_INSTRUCTION_ZH)
+
+# ---- M2 拼装：标签与校订刻意分开 ----
+_st_user = QM._compose_sync_user_text("SYNC-I", "SOURCE-TEXT", "en")
+check("M2a 同步的 user 文本：指令在前、源内容在后",
+      _st_user.index("SYNC-I") < _st_user.index("SOURCE-TEXT"))
+check("M2b 标签与校订**不同**（排查时一眼能看出这份是翻过来的）",
+      "CAPTION TO TRANSLATE" in _st_user and "EXISTING CAPTION" not in _st_user)
+check("M2c 中文目标用中文标签",
+      "待翻译的描述" in QM._compose_sync_user_text("I", "S", "zh"))
+check("M2d 校订路径没被这次改动影响（同一套拼装，标签各用各的）",
+      "EXISTING CAPTION:" in QM._compose_refine_user_text("I", "D", "en")
+      and "现有描述：" in QM._compose_refine_user_text("I", "D", "zh"))
+
+# ---- M3 _tag_runs 把同步指令一起带出来 ----
+_rr_sync = QM._tag_runs("photoreal", _presets["photoreal"], True)[0]
+check("M3a 双语两份各带**自己目标语言**的同步指令",
+      "translation, not a revision" in _rr_sync[0]["sync"]
+      and "翻译，不是改编" in _rr_sync[1]["sync"])
+check("M3b 单语 run 也带同步指令（字段齐全，取的时候不会 KeyError）",
+      bool(QM._tag_runs("photoreal", _presets["photoreal"], False)[0][0].get("sync")))
+
+# ---- M4 规划函数：谁被改过、谁是源、谁先跑 ----
+_runs_bl = QM._tag_runs("photoreal", _presets["photoreal"], True)[0]
+for _r in _runs_bl:                      # tag_folder 里 cfg 是先算好的，这里照做
+    _r["cfg"] = QM._refine_cfg_sig("photoreal", _r, 0)
+_runs_one = QM._tag_runs("photoreal", _presets["photoreal"], False)[0]
+for _r in _runs_one:
+    _r["cfg"] = QM._refine_cfg_sig("photoreal", _r, 0)
+
+
+def _mk_pair(dirname, en_text, zh_text, en_edited=False, zh_edited=False,
+             make_en=True, make_zh=True):
+    """造一张图 + 中英两份 txt + 两份「上次输出」记录。
+
+    edited=True 表示**文件内容与记录对不上** = 你手改过（这正是判定依据）。
+    """
+    _d = os.path.join(TMP_ROOT, dirname)
+    _p = make_set(_d, 1)[0]
+    _t = {"en": QM._txt_path_for(_p), "zh": QM._txt_path_for(_p, "_zh")}
+    for _lang, _txt, _edited, _made in (("en", en_text, en_edited, make_en),
+                                        ("zh", zh_text, zh_edited, make_zh)):
+        if not _made:
+            continue
+        open(_t[_lang], "w", encoding="utf-8").write(_txt)
+        QM._write_refine_state(
+            _t[_lang],
+            _txt if not _edited else "上次模型写出来的另一段东西",
+            _txt, [r for r in _runs_bl if r["lang"] == _lang][0]["cfg"])
+    return _d, _p, _t["en"], _t["zh"]
+
+
+def _plan(p, runs, sync_mode="auto", refine=True, mode="refine", force=False):
+    return QM._plan_image_jobs(p, runs, "", "utf-8", refine, mode, force, sync_mode)
+
+
+def _kinds(jobs):
+    return [(j["run"]["lang"], j["mark"]) for j in jobs]
+
+
+# M4a 谁都没改
+_d, _p, _t, _tz = _mk_pair("m_a", "EN-1", "ZH-1")
+_j, _s = _plan(_p, _runs_bl)
+check("M4a 两份都与记录一致 -> 一个 job 都不发（不白跑一遍模型）",
+      _j == [] and _s == (0, 0, 2, 0, 0), f"{_kinds(_j)} / {_s}")
+
+# M4b 只改中文 = 用户的实际用法
+_d, _p, _t, _tz = _mk_pair("m_b", "EN-1", "ZH-1", zh_edited=True)
+_j, _s = _plan(_p, _runs_bl)
+check("M4b 只改了中文 -> 中文照常校订 + 英文以中文为源同步",
+      _kinds(_j) == [("zh", "（校订原有）"), ("en", "（同步中文）")], str(_kinds(_j)))
+check("M4c **源排在目标前面**（目标要翻的是源校订之后的版本）",
+      _j[0]["run"]["lang"] == "zh", str(_kinds(_j)))
+check("M4d 同步 job 记着源文件路径（执行时现读，不缓存旧内容）",
+      _j[1]["src_tgt"] == _tz, str(_j[1]["src_tgt"]))
+check("M4e 过时的那份不当初稿，只留着备份用", _j[1]["draft"] == "EN-1")
+check("M4f 统计：校订 1 次、同步 1 次、无跳过", _s == (1, 0, 0, 1, 0), str(_s))
+
+# M4g 反向也认
+_d, _p, _t, _tz = _mk_pair("m_c", "EN-1", "ZH-1", en_edited=True)
+_j, _s = _plan(_p, _runs_bl)
+check("M4g 只改了英文 -> 英文校订 + 中文以英文为源同步（双向，不是只往下灌）",
+      _kinds(_j) == [("en", "（校订原有）"), ("zh", "（同步英文）")], str(_kinds(_j)))
+
+# M4h 两份都改
+_d, _p, _t, _tz = _mk_pair("m_d", "EN-1", "ZH-1", en_edited=True, zh_edited=True)
+_j, _s = _plan(_p, _runs_bl)
+check("M4h auto + 两份都被改过 -> 各改各的，谁也不覆盖谁（两边都有你的手笔）",
+      _kinds(_j) == [("en", "（校订原有）"), ("zh", "（校订原有）")], str(_kinds(_j)))
+check("M4i 统计里双边手改记 1 张（报告要据此提醒）", _s[4] == 1, str(_s))
+
+# M4j zh_to_en：中文为准
+_j, _s = _plan(_p, _runs_bl, sync_mode="zh_to_en")
+check("M4j zh_to_en + 两份都被改过 -> 以中文为准，英文那份被同步覆盖",
+      _kinds(_j) == [("zh", "（校订原有）"), ("en", "（同步中文）")], str(_kinds(_j)))
+_d, _p, _t, _tz = _mk_pair("m_e", "EN-1", "ZH-1")      # 谁都没改
+_j, _s = _plan(_p, _runs_bl, sync_mode="zh_to_en")
+check("M4k zh_to_en 但中文没被改过 -> 退回常规判定，不会每次把英文重刷一遍",
+      _j == [] and _s == (0, 0, 2, 0, 0), f"{_kinds(_j)} / {_s}")
+
+# M4l sync=off：旧行为
+_d, _p, _t, _tz = _mk_pair("m_f", "EN-1", "ZH-1", zh_edited=True)
+_j, _s = _plan(_p, _runs_bl, sync_mode="off")
+check("M4l sync=off -> 只改中文（英文按常规判定跳过，旧行为一字未改）",
+      _kinds(_j) == [("zh", "（校订原有）")] and _s == (1, 0, 1, 0, 0),
+      f"{_kinds(_j)} / {_s}")
+
+# M4m 中文被改但英文还没有 -> 同步过去 = 新建英文
+_d, _p, _t, _tz = _mk_pair("m_g", "EN-1", "ZH-1", zh_edited=True, make_en=False)
+_j, _s = _plan(_p, _runs_bl)
+check("M4m 英文那份压根不存在时也同步（新建，不是从零瞎写）",
+      _kinds(_j) == [("zh", "（校订原有）"), ("en", "（同步中文）")], str(_kinds(_j)))
+check("M4n 不存在的那份没有初稿 -> draft 为空（不产生 .orig 备份）", _j[1]["draft"] is None)
+
+# M4o refine_or_new 下，缺失的那份走同步而不是从零
+_j, _s = _plan(_p, _runs_bl, mode="refine_or_new")
+check("M4o refine_or_new：有源可依就同步，不会退化成从零瞎写",
+      _kinds(_j) == [("zh", "（校订原有）"), ("en", "（同步中文）")], str(_kinds(_j)))
+
+# M4p 单语：不参与同步
+_d, _p, _t, _tz = _mk_pair("m_h", "EN-1", "ZH-1", en_edited=True, zh_edited=True)
+_j, _s = _plan(_p, _runs_one)
+check("M4p 单语（只跑一份）时同步逻辑整个不参与（中文那份被改了也不管）",
+      _kinds(_j) == [("en", "（校订原有）")] and _s == (1, 0, 0, 0, 0),
+      f"{_kinds(_j)} / {_s}")
+
+# M4q 从零打标：老行为，同步参数不参与
+_d, _p, _t, _tz = _mk_pair("m_i", "EN-1", "ZH-1")
+_j, _s = _plan(_p, _runs_bl, refine=False, mode="off")
+check("M4q 从零打标：已有非空 txt 一律跳过，同步参数完全不参与",
+      _j == [] and _s == (0, 0, 0, 0, 0), f"{_kinds(_j)} / {_s}")
+
+# M4r force：没人被改时各自重做，不猜方向
+_j, _s = _plan(_p, _runs_bl, force=True)
+check("M4r overwrite=overwrite + 谁都没改 -> 各自重做，不做跨语言改写",
+      _kinds(_j) == [("en", "（校订原有）"), ("zh", "（校订原有）")], str(_kinds(_j)))
+
+# M4s 首次优化（两份都还没有输出记录）：不算「被改过」
+# 真机冒烟抓到的误报来源 —— 没记录 = 第一次见这份文件，不是「你改过两边」。
+_d = os.path.join(TMP_ROOT, "m_j")
+_p_first = make_set(_d, 1)[0]
+open(QM._txt_path_for(_p_first), "w", encoding="utf-8").write("EN-1")
+open(QM._txt_path_for(_p_first, "_zh"), "w", encoding="utf-8").write("ZH-1")
+_j, _s = _plan(_p_first, _runs_bl)
+check("M4s 两份都没有输出记录（首次优化）-> 各改各的，且不误报「双边手改」",
+      _kinds(_j) == [("en", "（校订原有）"), ("zh", "（校订原有）")] and _s == (2, 0, 0, 0, 0),
+      f"{_kinds(_j)} / {_s}")
+check("M4t 没有记录不等于「不用处理」（常规判定照旧会处理它）",
+      len(_j) == 2, str(len(_j)))
+
+# ---- M5 端到端：手改中文 -> 英文自动跟上 ----
+class _SeqModel(FakeModel):
+    """按调用顺序返回不同文本 —— 好把「源校订后变成什么」与「目标翻了什么」分开看。"""
+
+    def __init__(self, replies):
+        super().__init__()
+        self.queue = list(replies)
+
+    def generate(self, **kw):
+        self.n += 1
+        self.gen_kwargs.append(kw)
+        crit = kw.get("stopping_criteria")
+        if crit:
+            crit[0](input_ids=None)
+        if self.queue:
+            self.proc.reply_text = self.queue.pop(0)
+        return torch.tensor([[1, 2, 3] + REPLY_IDS])
+
+
+D40, _paths40 = jdir("m40", 1)
+_p40 = _paths40[0]
+_t40en = QM._txt_path_for(_p40)
+_t40zh = QM._txt_path_for(_p40, "_zh")
+open(_t40en, "w", encoding="utf-8").write("EN-DRAFT")
+open(_t40zh, "w", encoding="utf-8").write("ZH-DRAFT")
+h40 = Harness()
+h40.model = _SeqModel(["R-EN-1", "R-ZH-1"])
+h40.model.proc = h40.proc
+try:
+    _r40 = h40.run(D40, system_preset="photoreal", bilingual="en_then_zh",
+                   caption_mode="refine")
+    check("M5a 首次优化：中英两份各校订一次", h40.model.n == 2, str(h40.model.n))
+    check("M5b 英文写回校订结果", open(_t40en, encoding="utf-8").read() == "R-EN-1")
+    check("M5c 中文写回校订结果", open(_t40zh, encoding="utf-8").read() == "R-ZH-1")
+
+    open(_t40zh, "w", encoding="utf-8").write("ZH-EDITED")   # 用户手改中文
+    h40.model.queue = ["ZH-FIXED", "EN-FROM-ZH"]
+    _r41 = h40.run(D40, system_preset="photoreal", bilingual="en_then_zh",
+                   caption_mode="refine")
+    _ut = user_texts(h40)
+    check("M5d 手改中文后：只跑 2 次（中文校订 + 英文同步），英文没被当自己人重校一遍",
+          h40.model.n == 4, str(h40.model.n))
+    check("M5e 中文那份的 user 文本里带的是你改过的稿子（先校订）",
+          "ZH-EDITED" in _ut[-2], repr(_ut[-2][-60:]))
+    check("M5f **英文那份收到的是中文校订后的内容**（源排前面，执行时现读磁盘）",
+          "ZH-FIXED" in _ut[-1], repr(_ut[-1][-80:]))
+    check("M5g 英文那份用的是同步指令，不是校订指令",
+          "translation, not a revision" in _ut[-1]
+          and "EXISTING CAPTION" not in _ut[-1])
+    check("M5h 英文写回的是同步结果", open(_t40en, encoding="utf-8").read() == "EN-FROM-ZH")
+    check("M5i 中文写回的是它自己的校订结果", open(_t40zh, encoding="utf-8").read() == "ZH-FIXED")
+    check("M5j 英文的输出记录里记下了源指纹（诊断用）",
+          QM._read_refine_state(_t40en).get("src_sha1") == QM._text_sha1("ZH-FIXED"),
+          str(QM._read_refine_state(_t40en).get("src_sha1"))[:12])
+    check("M5k 被覆盖的英文原稿还在 .orig 里（只留第一次那份）",
+          open(_t40en + ".orig", encoding="utf-8").read() == "EN-DRAFT")
+    check("M5l 报告写明同步次数与档位",
+          "跨语言同步 1 次" in _r41["result"][0] and "双语同步" in _r41["result"][0])
+
+    _n_before = h40.model.n
+    _r42 = h40.run(D40, system_preset="photoreal", bilingual="en_then_zh",
+                   caption_mode="refine")
+    check("M5m 幂等：再跑一次零生成（不会每次都把中文重翻一遍）",
+          h40.model.n == _n_before, f"{_n_before} -> {h40.model.n}")
+    check("M5n 幂等：报告说明两份内容都没变",
+          "内容未变跳过 2 次" in _r42["result"][0])
+finally:
+    h40.close()
+
+# ---- M6 端到端：反向（手改英文 -> 中文跟上）与关掉同步 ----
+D41, _paths41 = jdir("m41", 1)
+_p41 = _paths41[0]
+_t41en = QM._txt_path_for(_p41)
+_t41zh = QM._txt_path_for(_p41, "_zh")
+open(_t41en, "w", encoding="utf-8").write("EN-DRAFT")
+open(_t41zh, "w", encoding="utf-8").write("ZH-DRAFT")
+h41 = Harness()
+h41.model = _SeqModel(["R-EN-1", "R-ZH-1"])
+h41.model.proc = h41.proc
+try:
+    h41.run(D41, system_preset="photoreal", bilingual="en_then_zh", caption_mode="refine")
+    open(_t41en, "w", encoding="utf-8").write("EN-EDITED")
+    h41.model.queue = ["EN-FIXED", "ZH-FROM-EN"]
+    _r43 = h41.run(D41, system_preset="photoreal", bilingual="en_then_zh",
+                   caption_mode="refine")
+    check("M6a 手改英文 -> 中文以英文为源同步（方向可逆）",
+          open(_t41zh, encoding="utf-8").read() == "ZH-FROM-EN"
+          and "EN-FIXED" in user_texts(h41)[-1], repr(open(_t41zh, encoding="utf-8").read()))
+    check("M6b 中文那份用的是中文同步指令", "翻译，不是改编" in user_texts(h41)[-1])
+
+    # 关掉同步：再改英文，中文就不该动
+    open(_t41en, "w", encoding="utf-8").write("EN-EDITED-AGAIN")
+    _before_zh = open(_t41zh, encoding="utf-8").read()
+    _n43 = h41.model.n
+    h41.model.queue = ["EN-FIXED-2"]
+    _r44 = h41.run(D41, system_preset="photoreal", bilingual="en_then_zh",
+                   caption_mode="refine", bilingual_sync="off")
+    check("M6c sync=off：只跑了改过的那一份（1 次生成）",
+          h41.model.n - _n43 == 1, str(h41.model.n - _n43))
+    check("M6d sync=off：中文那份原样不动（旧行为）",
+          open(_t41zh, encoding="utf-8").read() == _before_zh)
+    check("M6e sync=off：报告里如实写 off",
+          "双语同步    : off" in _r44["result"][0])
+finally:
+    h41.close()
+
+# ---- M7 控件与报告 ----
+_mt = NODE.INPUT_TYPES()["optional"]
+check("M7a bilingual_sync 选项与代码里的档位表一致",
+      list(_mt["bilingual_sync"][0]) == list(QM._SYNC_MODES),
+      str(list(_mt["bilingual_sync"][0])))
+check("M7b bilingual_sync 默认 auto（你不用改任何东西就能得到「改中文自动回灌英文」）",
+      _mt["bilingual_sync"][1]["default"] == "auto",
+      str(_mt["bilingual_sync"][1]["default"]))
+check("M7c 报告对三种档位都有话可说（不会打出一个看不懂的值）",
+      all(k in QM._SYNC_DESC for k in QM._SYNC_MODES))
+_msrc = inspect.getsource(NODE.tag_folder)
+check("M7d 同步判定用「源优先」排序（源必须排在目标前面执行）",
+      "order.sort" in inspect.getsource(QM._plan_image_jobs))
+check("M7e 执行时现读源文件，不缓存规划阶段的旧内容",
+      '_read_text_tolerant(job["src_tgt"]' in _msrc)
+check("M7f 源读不出来时明确报错而不是把空内容翻过去",
+      "同步源读不出内容" in _msrc)
 
 # ---- 收尾 ----
 print()

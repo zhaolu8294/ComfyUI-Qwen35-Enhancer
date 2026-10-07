@@ -2819,6 +2819,48 @@ _REFINE_INSTRUCTION_KEEP_LANG = """下面是这张图片现有的一段描述。
 _REFINE_LABEL = {"en": "EXISTING CAPTION:", "zh": "现有描述："}
 _REFINE_LABEL_FALLBACK = "现有描述（existing caption）："
 
+# 双语互同步：一份被改过时，另一份以它为源改写过去（见 _plan_image_jobs）。
+# 措辞的每一条都是必要的 —— 这是**翻译**而不是校订，不说死这一点，模型会
+# 顺手把源文本当成又一份初稿「重新描述」一遍，用户手改的东西就丢了：
+#   · 一一对应、不增不删 —— 防它自己发挥；
+#   · 不许「顺手纠正」—— 防它拿图片当权威反驳源文本（用户改的优先级最高）；
+#   · 保留语体与不消毒 —— 与 refine 指令同口径，别在翻译这道工序把 NSFW 洗掉。
+_SYNC_INSTRUCTION = """The image above already has a caption, but it was written in another language. The text below is that caption.
+
+Rewrite it into English. This is a translation, not a revision:
+
+- Carry every detail over, one for one. Add nothing, drop nothing, reorder nothing.
+- Do not describe the image again from scratch, and do not "correct" what the text says, even if you think the image shows something else.
+- Keep the same plain declarative register - no style, medium, technique or quality words.
+- Never sanitise: if it describes nudity or sexual content, keep that, said directly and specifically.
+- Output the English caption only - no preamble, no explanation, no quotes."""
+
+_SYNC_INSTRUCTION_ZH = """上面这张图片的描述已有，但写的是另一种语言。下面那段就是那条描述。
+
+请把它改写成中文。这是翻译，不是改编：
+
+- 内容一一对应地搬过来：不增加、不删减、不重排。
+- 不要照着图片重新描述一遍；也不要「顺手纠正」它写的内容，哪怕你觉得画面其实是别的样子。
+- 保持同样的平实陈述语体，不要风格、媒介、技法、画质类词。
+- 不要消毒：它若写了裸露或性内容，就照样直接、具体地写出来。
+- 只输出中文正文本身 —— 不要前言、不要解释、不要引号。"""
+
+_SYNC_LABEL = {"en": "CAPTION TO TRANSLATE (another language):",
+               "zh": "待翻译的描述（另一种语言）："}
+_SYNC_LABEL_FALLBACK = "待翻译的描述（caption in another language）："
+
+# 双语同步档位。用户的实际用法是「中文改着方便、英文才是最终产物」，
+# 所以默认 auto 就够；zh_to_en 是给「英文那边被别的流程动过、但我要以
+# 中文为准」这种情形准备的强制单向档。
+_SYNC_MODES = ("auto", "zh_to_en", "off")
+
+# 报告里怎么描述同步档位（只在双语 + 优化模式下打印）。
+_SYNC_DESC = {
+    "auto": "auto —— 哪一份被手改过就以它为源改写另一份；两份都被改过则各改各的",
+    "zh_to_en": "zh_to_en —— 中文被改过时无条件以中文为准（英文那份会被覆盖）",
+    "off": "off —— 两份各判各的，一边被改不会影响另一边",
+}
+
 # 预设存在外部 JSON 里，方便直接改文本而不用动代码。
 # 路径：<本节点目录>/presets/tagging_system_prompts.json
 # 文件不存在时会自动生成一份（内容即下面那六套内置预设），直接编辑即可。
@@ -2878,6 +2920,10 @@ _PRESET_JSON_README = [
     '             where the existing .txt next to the image is sent as a draft.',
     '             It is the user-side instruction for rewriting that draft.',
     '             Leave it out to fall back to a built-in instruction chosen by "lang".',
+    '  "sync_prompt"   - OPTIONAL. Used only when this language is being rewritten',
+    '             from its counterpart (bilingual_sync != "off", see the node tooltip).',
+    '             It is the user-side instruction for translating that text over.',
+    '             Leave it out to fall back to a built-in instruction chosen by "lang".',
     "A bare string is also accepted: \"mykey\": \"the whole prompt\".",
     "",
     "Bilingual mode pairs presets by group + lang, so photoreal and photoreal_zh",
@@ -2906,6 +2952,8 @@ def _preset_payload(presets):
             "prompt": str(v.get("prompt", "")).strip(),
             # refine_prompt 是可选字段：留空表示「用内置指令」（按 lang 选）。
             "refine_prompt": str(v.get("refine_prompt", "")).strip(),
+            # sync_prompt 同理：跨语言同步时这份要写成哪种语言，指令就按哪种语言选。
+            "sync_prompt": str(v.get("sync_prompt", "")).strip(),
         }
     return {"_readme": _PRESET_JSON_README,
             "_version": _PRESET_SCHEMA_VERSION,
@@ -2946,6 +2994,9 @@ def _parse_preset_payload(data):
             "format": fmt,
             # 可选：refine 模式的校订指令。空串 = 用内置的（按 lang 选）。
             "refine_prompt": str(v.get("refine_prompt") or "").strip(),
+            # 可选：跨语言同步（bilingual_sync）时用的改写指令。
+            # 空串 = 用内置的（按**目标语言**选，见 _sync_instruction）。
+            "sync_prompt": str(v.get("sync_prompt") or "").strip(),
         }
     if not out:
         raise ValueError("presets 里没有一条有效预设")
@@ -3077,6 +3128,7 @@ def _tag_runs(key, record, bilingual):
         "format": fmt,
         "label": record.get("label") or key,
         "refine": _refine_instruction(record),
+        "sync": _sync_instruction(record),
     }]
     if not bilingual:
         return single, None
@@ -3111,6 +3163,7 @@ def _tag_runs(key, record, bilingual):
             "format": v.get("format"),
             "label": v.get("label") or k,
             "refine": _refine_instruction(v),
+            "sync": _sync_instruction(v),
         })
     return runs, None
 
@@ -3138,15 +3191,49 @@ def _refine_instruction(record):
     return _REFINE_INSTRUCTION_KEEP_LANG
 
 
-def _compose_refine_user_text(instruction, draft, lang):
-    """把校订指令与已有描述拼成 user 侧文本。
+def _sync_instruction(record):
+    """取这一趟「从另一种语言同步过来」用的指令。
 
-    指令在前、初稿在后，中间用一行标签隔开 —— 模型需要明确知道
-    「下面是待校订的稿子」而不是继续读指令。标签按语言选，
-    这样中文预设里出现的也是中文标签，减少语种串味。
+    与 _refine_instruction 同构：预设自带 sync_prompt 优先，
+    否则按**目标语言**（这份要写成的语言）回落内置的英文 / 中文指令。
     """
-    label = _REFINE_LABEL.get(str(lang or "").strip().lower(), _REFINE_LABEL_FALLBACK)
-    return (f"{str(instruction or '').strip()}\n\n{label}\n{str(draft or '').strip()}")
+    own = str((record or {}).get("sync_prompt") or "").strip()
+    if own:
+        return own
+    lang = str((record or {}).get("lang") or "").strip().lower()
+    return _SYNC_INSTRUCTION_ZH if lang == "zh" else _SYNC_INSTRUCTION
+
+
+def _compose_labeled_user_text(instruction, body, label):
+    """指令在前、正文在后，中间用一行标签隔开。
+
+    模型需要明确知道「下面是待处理的稿子」而不是继续把正文当指令读。
+    标签按语言选，这样中文预设里出现的也是中文标签，减少语种串味。
+    """
+    return (f"{str(instruction or '').strip()}\n\n"
+            f"{label}\n{str(body or '').strip()}")
+
+
+def _label_for(table, fallback, lang):
+    return table.get(str(lang or "").strip().lower(), fallback)
+
+
+def _compose_refine_user_text(instruction, draft, lang):
+    """把校订指令与已有描述拼成 user 侧文本。"""
+    return _compose_labeled_user_text(
+        instruction, draft, _label_for(_REFINE_LABEL, _REFINE_LABEL_FALLBACK, lang))
+
+
+def _compose_sync_user_text(instruction, source_text, lang):
+    """把「跨语言同步」指令与**另一种语言的那份内容**拼成 user 侧文本。
+
+    标签与 refine 的刻意分开：这两件事在日志和排查时常常要区分开 ——
+    看到 CAPTION TO TRANSLATE 才知道这一份是从对面翻过来的，
+    而不是拿自己的旧稿在校订。
+    """
+    return _compose_labeled_user_text(
+        instruction, source_text,
+        _label_for(_SYNC_LABEL, _SYNC_LABEL_FALLBACK, lang))
 
 
 # 截断时优先退到这些标点之后；退不到再退到分句标点之前。
@@ -3542,7 +3629,7 @@ def _read_refine_state(txt_path):
         return {}
 
 
-def _write_refine_state(txt_path, text, draft, cfg_sig):
+def _write_refine_state(txt_path, text, draft, cfg_sig, src_sha1=""):
     """写下这一次的输出记录。
 
     记的是**输出内容**的指纹，不是「处理过了」这个布尔量 —— 判定要按内容来：
@@ -3553,12 +3640,17 @@ def _write_refine_state(txt_path, text, draft, cfg_sig):
       · draft_sha1 只是诊断用，能看出这次是基于哪一版初稿跑出来的；
       · cfg 是「预设 / 语言 / 格式 / 上限 / 两段提示词」的合成指纹 ——
         内容没变但你换了预设，也该重做，不能因为「文件没动」就跳过去。
+      · src_sha1 同样只是诊断用：跨语言同步时记下「那时的源文件长什么样」。
+        不拿它做判定 —— 判定靠「源自己有没有被改过」（见 _plan_image_jobs），
+        因为源在这一趟里还会被校订，拿规划时的旧指纹去比只会比错。
+
     写失败只告警：大不了下次多跑一遍，不该因为记录写不进去就判定这次失败。
     """
     data = {
         "v": 1,
         "out_sha1": _text_sha1(text),
         "draft_sha1": _text_sha1(draft) if draft else "",
+        "src_sha1": str(src_sha1 or ""),
         "cfg": str(cfg_sig or ""),
         "chars": len(str(text or "")),
         "ts": int(time.time()),
@@ -3614,7 +3706,7 @@ def _backup_once(path, suffix=".orig"):
     return True
 
 
-def _write_refined_text(path, text, encoding, draft=None, cfg_sig=""):
+def _write_refined_text(path, text, encoding, draft=None, cfg_sig="", src_sha1=""):
     """优化已有打标时写回：先备份原稿、再原子覆盖、最后记下输出指纹。
 
     返回是否新写了 `.orig` 备份。备份只在**真有初稿**且**尚未备份过**时写：
@@ -3636,8 +3728,126 @@ def _write_refined_text(path, text, encoding, draft=None, cfg_sig=""):
                 pass
         raise
     # 输出落盘成功之后才记账：记早了会在写失败时留下假记录。
-    _write_refine_state(path, text, draft, cfg_sig)
+    _write_refine_state(path, text, draft, cfg_sig, src_sha1)
     return made
+
+
+def _plan_image_jobs(src, runs, suffix_base, output_encoding,
+                     refine, mode, force, sync_mode):
+    """决定一张图的每一种语言要不要写、写什么、以什么为初稿。
+
+    返回 (jobs, stat)：
+      jobs = [dict(tgt, run, draft, src_tgt, mark), ...]，**顺序已排好**
+      stat = (n_draft, n_blank, n_same, n_sync, n_both)
+
+    只在这里做「读文件 + 读记录 + 判指纹」，不碰模型也不写盘 ——
+    整个文件夹的取舍必须在加载模型之前定完（一张都不用处理的文件夹，
+    不该白等二十秒加载一次模型）。
+
+    ---- 双语互同步 ----
+    实际用法是「中文改着方便、英文才是最终产物」，所以开了双语 + 优化模式时
+    两份要能互相追平：一份被手改过 -> 以它为源把另一份改写过去。
+    这是**跨语言**的判定，两份都看过才能定，不能边判边发。
+
+    「被改过」= 文件此刻的 sha1 与上次输出的记录对不上（手改、别的工具改过、
+    或压根没有记录）。三种情形：
+
+      · 只有一份被改 -> 它是源，另一份以它为准改写（auto 与 zh_to_en 都这样）
+      · 两份都被改   -> auto：各改各的，谁也不覆盖谁（两边都有你的手笔，
+                       代码判不出谁对谁错，硬盖一定丢东西）；
+                       zh_to_en：以中文为准，英文的改动被覆盖
+      · 谁都没被改   -> 各走各的判定（内容与配置都没变就跳过）
+
+    源排在目标**前面**执行：源这一趟自己也会被校订，目标该翻的是校订**之后**
+    的版本（原话是「优化完以后，同步到另外语言」）。
+    """
+    jobs = []
+    n_draft = n_blank = n_same = n_sync = 0
+
+    cur = []
+    for r in runs:
+        tgt = _txt_path_for(src, suffix_base + r["suffix"])
+        text = ""
+        if os.path.isfile(tgt) and os.path.getsize(tgt) > 0:
+            text = _read_text_tolerant(tgt, output_encoding) or ""
+        st = _read_refine_state(tgt) if text else {}
+        # 「被改过」必须是「**有**记录、且内容与记录对不上」。
+        # 没有记录（第一次见这份文件：新导入的数据集、或从没跑过本节点）不算被改 ——
+        # 否则两份初稿都没记录时会被判成「双边手改」，明明该各改各的，
+        # 却打出一条吓人的「两边都被改过」警告（真机冒烟时抓到过）。
+        # 注意这只影响**跨语言同步的方向判定**；要不要处理这张，走的是下面那套
+        # 常规判定（没记录 = 没变过 = 要处理）。
+        edited = (bool(text) and bool(st.get("out_sha1"))
+                  and st.get("out_sha1") != _text_sha1(text))
+        cur.append({
+            "tgt": tgt,
+            "run": r,
+            "text": text,
+            "state": st,
+            "edited": edited,
+        })
+
+    # ---- 从零打标：同步与它无关，老行为一字未改 ----
+    if not refine:
+        for c in cur:
+            if c["text"] and not force:
+                continue
+            jobs.append({"tgt": c["tgt"], "run": c["run"], "draft": None,
+                         "src_tgt": None, "mark": ""})
+        return jobs, (0, 0, 0, 0, 0)
+
+    # ---- 优化模式：先定谁是源 ----
+    smode = str(sync_mode or "off").strip().lower()
+    src_idx, n_both = None, 0
+    if smode in ("auto", "zh_to_en") and len(cur) == 2:
+        hot = [i for i, c in enumerate(cur) if c["edited"]]
+        zh_i = next((i for i, c in enumerate(cur)
+                     if str(c["run"].get("lang")) == "zh"
+                     and cur[i]["edited"]), None)
+        if smode == "zh_to_en":
+            # 单向：中文被改过就以它为准，连「英文也被改过」都不管。
+            # 中文没被改则退回常规判定 —— 否则每跑一次都要重刷一遍英文。
+            src_idx = zh_i
+        elif len(hot) == 1:
+            src_idx = hot[0]
+        elif len(hot) > 1:
+            n_both = 1
+
+    order = list(range(len(cur)))
+    if src_idx is not None:
+        order.sort(key=lambda i: 0 if i == src_idx else 1)
+
+    for i in order:
+        c = cur[i]
+        r = c["run"]
+        if src_idx is not None and i != src_idx:
+            s = cur[src_idx]
+            # 目标自己那份内容已经过时，不当初稿；但**留着备份** ——
+            # 它好歹是上一次的产物，翻崩了还能翻回来。
+            jobs.append({
+                "tgt": c["tgt"], "run": r, "draft": c["text"] or None,
+                "src_tgt": s["tgt"],
+                "mark": f"（同步{_lang_word(s['run'].get('lang'))}）",
+            })
+            n_sync += 1
+            continue
+        if not c["text"]:
+            # 没有可用初稿：refine 下不碰；refine_or_new 才从零补写
+            if mode == "refine_or_new":
+                jobs.append({"tgt": c["tgt"], "run": r, "draft": None,
+                             "src_tgt": None, "mark": "（从零补写）"})
+                n_blank += 1
+            continue
+        if not force:
+            st = c["state"]
+            if (st.get("out_sha1") == _text_sha1(c["text"])
+                    and st.get("cfg") == r.get("cfg")):
+                n_same += 1
+                continue
+        jobs.append({"tgt": c["tgt"], "run": r, "draft": c["text"],
+                     "src_tgt": None, "mark": "（校订原有）"})
+        n_draft += 1
+    return jobs, (n_draft, n_blank, n_same, n_sync, n_both)
 
 
 def _open_image_for_tagging(path, max_side=1280):
@@ -3820,6 +4030,17 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                     "tooltip": "仅 desc_length=custom 时生效。填字数区间，"
                                "例如 60~150（英文按 words 计，中文按字计）。",
                 }),
+                # 双语互同步：只有 bilingual=en_then_zh + caption_mode != off 才生效。
+                # 中文改着方便、英文是最终产物，所以默认 auto —— 你手改了哪一份，
+                # 另一份就以它为源改写过去，两边不会各说各话。
+                "bilingual_sync": (_SYNC_MODES, {
+                    "default": "auto",
+                    "tooltip": "双语模式下的跨语言追平（需 caption_mode != off）。"
+                               "auto=哪一份被手改过就以它为源改写另一份，"
+                               "两份都被改过则各改各的；"
+                               "zh_to_en=中文被改过时无条件以中文为准（覆盖英文的改动）；"
+                               "off=两份各判各的（旧行为）。",
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3927,7 +4148,7 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                    dry_run=False, keep_model_loaded=False, unload_other_models=True,
                    custom_model_path="", show_progress=True, progress_interval=2.0,
                    bilingual="off", max_output_chars=0, caption_mode="off",
-                   desc_length="preset", desc_words="",
+                   desc_length="preset", desc_words="", bilingual_sync="auto",
                    backend=None, unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
@@ -3983,56 +4204,27 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             files = files[: int(limit)]
 
         # 「这个 txt 要不要写」在加载模型之前全部判完：整个文件夹都已打好标时，
-        # 不该白等二十秒加载一次模型。
+        # 不该白等二十秒加载一次模型。判定细节都在 _plan_image_jobs 里
+        # （含双语互同步），这里只负责汇总。
         # 双语模式下按**每种语言各自判断**：英文已有、中文还没有时只补中文，
         # 不去覆盖已经写好的英文 —— skip 的语义必须守住。
-        #
-        # caption_mode != "off"（优化已有打标）时，判定几乎整个反过来：
-        #   · 从零打标看「有没有 txt」；优化看的是「txt 存不存在 + 有没有 .orig 备份」。
-        #   · 没 txt 的图在 refine 下无事可做 → 跳过；refine_or_new 则退回从零写。
-        #   · .orig 已存在说明这张已经优化过一次，默认跳过（overwrite=overwrite 才重做），
-        #     否则每跑一次都会把上一次的成果再「优化」一遍，越改越走样。
         mode = str(caption_mode or "off")
         refine = mode in ("refine", "refine_or_new")
         force = str(overwrite) == "overwrite"
 
-        todo = []                           # [(图路径, [(目标 txt, run, 初稿或 None), ...])]
-        skipped = []                        # 这一批不处理的图
-        n_draft = n_blank = n_same = 0      # 有初稿要优化 / 无初稿从零写 / 内容未变而跳过（按「次」计）
+        todo = []                # [(图路径, [job, ...])]，job 见 _plan_image_jobs
+        skipped = []             # 这一批不处理的图
+        n_draft = n_blank = n_same = n_sync = n_both = 0
         for src in files:
-            jobs = []
-            for r in runs:
-                tgt = _txt_path_for(src, output_suffix + r["suffix"])
-                has = os.path.isfile(tgt) and os.path.getsize(tgt) > 0
-                if not refine:
-                    # 从零打标：已经有非空 txt 就跳过（老行为，一字未改）
-                    if has and not force:
-                        continue
-                    jobs.append((tgt, r, None))
-                    continue
-                # ---- 优化已有打标 ----
-                if not has:
-                    if mode == "refine_or_new":
-                        jobs.append((tgt, r, None))     # 无初稿 -> 从零补写
-                        n_blank += 1
-                    continue
-                draft = _read_text_tolerant(tgt, output_encoding)
-                if not draft:                           # 文件非空但读出来是空白
-                    if mode == "refine_or_new":
-                        jobs.append((tgt, r, None))
-                        n_blank += 1
-                    continue
-                # 内容没变就不动它：拿上次的输出记录比指纹。
-                # 这样「我手动改过这一张」会自动被认出来并继续优化，
-                # 而没动过的图不会每次都被重写一遍。
-                if not force:
-                    st = _read_refine_state(tgt)
-                    if (st.get("out_sha1") == _text_sha1(draft)
-                            and st.get("cfg") == r.get("cfg")):
-                        n_same += 1
-                        continue
-                jobs.append((tgt, r, draft))
-                n_draft += 1
+            jobs, st_one = _plan_image_jobs(
+                src, runs, output_suffix, output_encoding,
+                refine, mode, force, str(bilingual_sync or "off"),
+            )
+            n_draft += st_one[0]
+            n_blank += st_one[1]
+            n_same += st_one[2]
+            n_sync += st_one[3]
+            n_both += st_one[4]
             if jobs:
                 todo.append((src, jobs))
             else:
@@ -4061,6 +4253,11 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             len_line = (f"  描述长度    : {_desc_length_desc(len_spec)}"
                         f"（desc_length={len_level}，{_how_txt}）")
 
+        # 双语同步只在「双语 + 优化模式」下才有意义，报告里把它的实际状态说清，
+        # 免得用户以为开了却没生效（或者反过来，以为没开却在跨语言改写）。
+        sync_eff = str(bilingual_sync or "off").strip().lower()
+        sync_live = bool(refine and len(runs) == 2 and sync_eff in ("auto", "zh_to_en"))
+
         head = [
             "[Qwen35] ========== 批量打标 ==========",
             f"  文件夹      : {folder}",
@@ -4081,11 +4278,26 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"（整张无需处理跳过 {len(skipped)} 张，overwrite={overwrite}）",
         ]
         if refine:
+            if len(runs) == 2:
+                head.append("  双语同步    : "
+                            + _SYNC_DESC.get(sync_eff, sync_eff))
+                if sync_eff in ("auto", "zh_to_en") and not force:
+                    head.append(
+                        "  ⓘ 判定依据  : 文件现在的指纹与上次输出记录对不上 = 被改过。"
+                        "只有一份被改才跨语言改写；两份都改过时 auto 不覆盖任何一边"
+                    )
             head.append(
                 f"  初稿        : 待优化 {n_draft} 次"
                 + (f"，无初稿从零写 {n_blank} 次" if n_blank else "")
+                + (f"，跨语言同步 {n_sync} 次" if n_sync else "")
                 + (f"，内容未变跳过 {n_same} 次" if n_same else "")
             )
+            if n_both:
+                head.append(
+                    f"  ⓘ 双边手改  : {n_both} 张的中英两份都被改过 → 两份各改各的，"
+                    f"没有互相覆盖（谁对谁错代码判断不了；要强制以中文为准"
+                    f"就把 bilingual_sync 设成 zh_to_en）"
+                )
             head.append(
                 f"  变更判定    : 拿上次输出的指纹比对，内容没变就不动它；"
                 f"你手动改过的会自动继续优化（想强制重做设 overwrite=overwrite）"
@@ -4119,14 +4331,13 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         if dry_run:
             head.append("  ⓘ dry_run=true：只列清单，不加载模型、不写任何文件")
             for src, jobs in todo[:20]:
-                for tgt, r, draft in jobs:
-                    mark = ""
-                    if refine:
-                        mark = "  ✎ 校订已有初稿" if draft else "  + 从零补写"
+                for job in jobs:
+                    tgt = job["tgt"]
                     head.append(
                         f"     {os.path.relpath(src, folder)}"
                         f"  ->  {os.path.relpath(tgt, folder)}"
-                        f"   [{_lang_word(r.get('lang'))}]{mark}"
+                        f"   [{_lang_word(job['run'].get('lang'))}]"
+                        f"{('  ' + job['mark']) if refine and job.get('mark') else ''}"
                     )
             if len(todo) > 20:
                 head.append(f"     … 另有 {len(todo) - 20} 张")
@@ -4215,15 +4426,35 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             name = os.path.relpath(src, folder)
             t_img = time.perf_counter()
             img_fail = 0
-            for tgt, r, draft in jobs:
+            for job in jobs:
+                tgt = job["tgt"]
+                r = job["run"]
+                draft = job["draft"]
                 # 双语时把语言写进日志，否则分不清哪一份是哪个语种
                 label = f"{name} [{_lang_word(r.get('lang'))}]" if multi else name
-                if refine:
-                    label += "（校订原有）" if draft else "（从零补写）"
-                # 优化已有打标：把初稿连同校订指令一起塞进 user 侧文本。
-                # 系统提示词不动 —— 全局口径（只写内容不写风格、用哪国语言）仍由它负责。
+                if refine and job.get("mark"):
+                    label += job["mark"]
+                # user 侧文本两种来源：
+                #   · 跨语言同步 -> 塞**另一种语言那份**的内容。源排在目标前面，
+                #     所以这里现读磁盘 —— 拿到的是源这一趟校订**之后**的版本，
+                #     而不是规划时缓存下来的旧版。
+                #   · 否则：有初稿就校订、没有就从零写。
+                # 系统提示词两种都不动 —— 全局口径（只写内容不写风格、用哪国语言）
+                # 仍然由它负责。
                 u_prompt = user_prompt
-                if draft:
+                src_sha1 = ""
+                if job.get("src_tgt"):
+                    _src_txt = _read_text_tolerant(job["src_tgt"], output_encoding)
+                    if not _src_txt:
+                        raise RuntimeError(
+                            f"同步源读不出内容（{os.path.basename(job['src_tgt'])}）"
+                            f" —— 它这一趟大概失败了。这份先不动，下次会自动重来"
+                        )
+                    src_sha1 = _text_sha1(_src_txt)
+                    u_prompt = _compose_sync_user_text(
+                        r.get("sync") or "", _src_txt, r.get("lang")
+                    )
+                elif draft:
                     u_prompt = _compose_refine_user_text(
                         r.get("refine") or "", draft, r.get("lang")
                     )
@@ -4253,7 +4484,8 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                         # 优化已有打标：先备份原稿（只留第一次那份），再原子覆盖，
                         # 最后把输出指纹记进 .q35state —— 下次靠它判断「内容有没有变」。
                         if _write_refined_text(tgt, text, output_encoding,
-                                               draft=draft, cfg_sig=r.get("cfg")):
+                                               draft=draft, cfg_sig=r.get("cfg"),
+                                               src_sha1=src_sha1):
                             n_bak += 1
                     else:
                         _write_text_atomic(tgt, text, output_encoding)
