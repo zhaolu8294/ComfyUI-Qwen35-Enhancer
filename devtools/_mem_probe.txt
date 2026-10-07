@@ -1,0 +1,20 @@
+﻿TotalMB=65292
+FreeMB=42563
+CommitLimitMB=104595
+CommitFreeMB=52377
+--- 进程内存 TOP15 ---
+WorkBuddy                    PID=40644    WS=2620 MB
+ChatGPT                      PID=40048    WS=569 MB
+chrome                       PID=16212    WS=532 MB
+ymir-headless                PID=24500    WS=506 MB
+ymir-headless                PID=47420    WS=506 MB
+WorkBuddy                    PID=38896    WS=501 MB
+python                       PID=39668    WS=480 MB
+python                       PID=49188    WS=479 MB
+WorkBuddy                    PID=31088    WS=462 MB
+explorer                     PID=25896    WS=422 MB
+chrome                       PID=49292    WS=370 MB
+chrome                       PID=11640    WS=331 MB
+Notepad                      PID=17448    WS=284 MB
+chrome                       PID=19020    WS=281 MB
+ChatGPT                      PID=48608    WS=271 MB

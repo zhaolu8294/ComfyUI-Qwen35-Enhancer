@@ -1050,10 +1050,19 @@ def _linear_attn_decode_note(out_tok, dec_s):
     return (
         f"  ℹ 解码 {rate:.1f} tok/s：本模型有 {_LIN_ATTN_TOTAL} 层线性注意力"
         f"（Gated DeltaNet），其中 {_LIN_ATTN_TOTAL - (_LIN_ATTN_FUSED or 0)} 层走的是 "
-        f"transformers 自带的 torch 回退（fp32 + 逐个 token + 小张量串行）。"
-        f"本机实测回退 1.0 ms/层、融合内核 0.66 ms/层，24 层即占解码约一半；"
-        f"装 fla（flash-linear-attention，纯 Python wheel、无需编译）即换成融合 Triton "
-        f"内核，约省 1/3 解码时间。"
+        f"transformers 自带的 torch 回退（逐 token 串行小算子）。"
+        f"本机 profile 实测该路径每输出 token 要发约 3365 个 CUDA kernel（平均 17us），"
+        f"但 bf16 下实测解码仍有 20~23 tok/s，属正常水位。"
+        f"⚠ 不要装 fla（flash-linear-attention）：transformers 只校验版本号（>=0.2.2）"
+        f"不校验 API，而 0.3 起 fla 已无 fla.modules —— 装上会让本模型直接加载失败；"
+        f"实测 0.2.2 + triton-windows 会卡在首个 kernel（fla 官方不支持 Windows）。"
+        f"解码明显低于 20 tok/s 时，问题不在线性注意力，先看 CPU："
+        f"本路径是「单核 + 逐个小算子派发」的负载形态，若 CPU 是 Intel 混合架构"
+        f"（P-core/E-core），Windows 会把这种持续吃 CPU 的线程调度到 E-core。"
+        f"本机（i7-14700KF）实测只给 P-core 18.8 tok/s、只给 E-core 7.4 tok/s、"
+        f"不限核 7.1 tok/s（不限核 ≈ 只给 E-core，即默认就落在 E 核上），差 2.66 倍；"
+        f"提高进程优先级无效（HIGH 7.9 / ABOVE_NORMAL 8.6）。"
+        f"解法：把 ComfyUI 进程钉到 P-core，见插件 devtools/pin_comfyui_pcores.py。"
     )
 
 
@@ -1090,9 +1099,14 @@ def _linear_attn_load_note(fused, total):
     extra = f"（{fused} 层已用融合内核）" if fused else ""
     return (
         f"[Qwen35] 线性注意力：{total} 层里 {total - fused} 层走 torch 回退{extra} —— "
-        f"这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），"
-        f"24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention"
-        f"（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）"
+        f"这是 Qwen3.5 混合架构在本机 HF 路径上的固有状态（逐 token 串行小算子，"
+        f"profile 实测约 3365 个 CUDA kernel/token），bf16 下解码正常水位 20~23 tok/s。"
+        f"⚠ 不要装 flash-linear-attention：transformers 只校验版本号（>=0.2.2）"
+        f"不校验 API，而 0.3 起 fla 已无 fla.modules —— 装上会让本模型直接加载失败；"
+        f"实测 0.2.2 + triton-windows 会卡在首个 kernel（fla 官方不支持 Windows）。"
+        f"要提速，按这个顺序试：① Intel 混合架构（P-core/E-core）的机器先把 ComfyUI 钉到 "
+        f"P-core —— 本机实测 7.1 → 18.8 tok/s（2.66 倍），工具见 devtools/pin_comfyui_pcores.py；"
+        f"② 改用 GGUF 后端（同机实测 27B 34~37 tok/s）。"
     )
 
 

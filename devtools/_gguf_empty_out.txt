@@ -1,0 +1,62 @@
+server : H:\AI\llama.cpp\b11461\llama-server.exe
+model  : Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf  (16.19 GB)
+mmproj : mmproj-model-bf16.gguf  (0.87 GB)
+
+启动 llama-server…
+   正在加载 GGUF 模型到显存…已等 5s（首次 mmap 十几 GB 权重，慢盘上两分钟正常）
+   正在加载 GGUF 模型到显存…已等 10s（首次 mmap 十几 GB 权重，慢盘上两分钟正常）
+   正在加载 GGUF 模型到显存…已等 15s（首次 mmap 十几 GB 权重，慢盘上两分钟正常）
+   正在加载 GGUF 模型到显存…已等 20s（首次 mmap 十几 GB 权重，慢盘上两分钟正常）
+就绪，用时 21.9s，端口 8235
+
+==========================================================================
+① chat template 自查
+==========================================================================
+  template 长度: 9993
+  含 'enable_thinking'      : True
+  含 'thinking'             : True
+  含 '<|im_start|>'         : True
+  --- 出现位置上下文 ---
+  ' if sysns.text else '') + sys_content %}
+          {%- endif %}
+          {%- set sysns.count = sysns.count + 1 %}
+      {%- endif %}
+  {%- endfor %}
+  {%- set num_sys = sysns.count %}
+  {%- set merged_system = sysns.text %}
+  {%- set reasoning_instructions = '' %}
+  {%- if enable_thinking is undefined or enable_thinking is true %}
+      {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+      {%- if resolved_reasoning_effort == 'high' %}
+          {%- set resolved_reasoning_effort = 'xhigh' %}
+      {%- endif %}
+    
+
+==========================================================================
+② 四种组合对比
+==========================================================================
+  [A 纯文本 +no_think] 14.4s  finish='stop'
+      completion_tokens=601  prompt_tokens=56
+      len(content)=2379  len(reasoning_content)=0
+      content[:180]    = 'Based on the image provided, here is a detailed description of the character:\n\n**Character Identity:**\nThe character is **Sailor Moon** (Usagi Tsukino) from the anime/manga series '
+      reasoning[:180]  = ''
+
+  [B 带图   +no_think] 16.5s  finish='stop'
+      completion_tokens=632  prompt_tokens=1588
+      len(content)=2846  len(reasoning_content)=0
+      content[:180]    = 'This is a close-up, anime-style portrait of a young woman with a calm and slightly melancholic expression. Here’s a detailed breakdown:\n\n**Hair:**\n- **Style:** She has shoulder-len'
+      reasoning[:180]  = ''
+
+  [C 带图初稿+no_think] 4.2s  finish='stop'
+      completion_tokens=123  prompt_tokens=1640
+      len(content)=625  len(reasoning_content)=0
+      content[:180]    = 'An anime-style woman with shoulder-length, layered lavender-purple hair and straight bangs framing her face. She has large, expressive brown eyes with prominent highlights, giving '
+      reasoning[:180]  = ''
+
+  [D 带图初稿(无kwarg)] 22.4s  finish='stop'
+      completion_tokens=893  prompt_tokens=1676
+      len(content)=351  len(reasoning_content)=3542
+      content[:180]    = 'a girl with short lavender hair styled in a chin-length bob with straight, side-swept bangs and large brown eyes, wearing an off-the-shoulder white top with ruffled straps and a ru'
+      reasoning[:180]  = 'The user wants me to rewrite an existing caption to be more accurate and detailed while preserving its structure. Let me carefully examine the image against the existing caption.\n\n'
+
+server 已关闭

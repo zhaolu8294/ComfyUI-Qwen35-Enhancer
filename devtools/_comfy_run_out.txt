@@ -1,0 +1,7 @@
+临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_api_wf4a6uru
+配置: character / extra_long / raw / 上限 784 / 1536 / 思考关 / 自检关 / bf16
+跑前  显存 22.44 GiB 可用 / 内存 40.83 GiB 可用
+      ComfyUI argv = ['E:\\AI\\ComfyUI-aki-v3\\ComfyUI\\main.py', '--auto-launch', '--preview-method', 'auto', '--cuda-malloc']
+
+!! 提交失败 HTTPError: HTTP Error 400: Bad Request
+b'{"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "Value not in list: model_name: \'huihui-ai_Huihui-Qwen3.5-9B-abliterated\' not in [\'huihui-ai_Huihui-Qwen3.5-9B-abliterated  [Qwen3_5ForConditionalGeneration]\', \'Qwen3-VL-8B-Instruct  [Qwen3VLForConditionalGeneration]\']", "extra_info": {}}, "node_errors": {"1": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", "details": "model_name: \'huihui-ai_Huihui-Qwen3.5-9B-abliterated\' not in [\'huihui-ai_Huihui-Qwen3.5-9B-abliterated  [Qwen3_5ForConditionalGeneration]\', \'Qwen3-VL-8B-Instruct  [Qwen3VLForConditionalGeneration]\']", "extra_info": {"input_name": "model_name", "input_config": [["huihui-ai_Huihui-Qwen3.5-9B-abliterated  [Qwen3_5ForConditionalGeneration]", '

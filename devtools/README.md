@@ -14,33 +14,36 @@ E:\AI\ComfyUI-aki-v3\python\python.exe sync_devtools_to_repo.py            # 正
 
 同步只覆盖有变化的文件，可反复执行。
 
-## 内容（62 份备份副本，约 570 KB）
+## 内容（125 份备份副本，约 1.4 MB）
 
 | 类别 | 数量 | 说明 | 代表文件 |
 |---|---|---|---|
 | 回归测试 | 8 | 纯 Python，用测试桩替代 ComfyUI，**不占显卡** | `test_qwen35_tagger.py`、`test_qwen35_v6_bilingual.py` |
 | 独立校验 | 4 | 复现修复效果、校验工作流结构 | `verify_h3_workflows.py`、`verify_qwen35_patch.py` |
-| 性能基准 | 8 | 量化档 A/B、注意力后端、精度对照 | `bench_real_quant.py`、`bench_qwen35_proj_ab.py` |
-| 故障诊断 | 3 | 定位 NaN、执行顺序、速度异常 | `diag_fla_nan.py` |
-| 能力探针 / 剖析 | 3 | 探查环境支持哪些算子、显存去向 | `probe_qwen35_linear_attn.py`、`profile_vision_tower.py` |
-| 生成器 | 4 | 生成示例工作流、生成 `push.bat` | `make_batch_tagger_example.py`、`make_push_bat.py` |
+| 性能基准 | 10 | 量化档 A/B、注意力后端、精度对照、**P/E 核单核性能** | `bench_real_quant.py`、`bench_core_type.py` |
+| 故障诊断 | 13 | 定位 NaN、执行顺序、速度异常、**CPU 亲和性因果 A/B** | `diag_fla_nan.py`、`diagnose_core_pinning.py` |
+| 探针 / 剖析 | 8 | 探查环境支持哪些算子、显存去向、**线程级 CPU 占用** | `probe_qwen35_linear_attn.py`、`probe_thread_cpu.py` |
+| 火焰图 | 2 | 解析 py-spy speedscope dump | `analyze_pyspy.py`、`pyspy_thread_stacks.py` |
+| 冒烟测试 | 3 | 端到端快速跑一遍，只给结论 | `smoke_verify.py` |
+| 生成器 | 4 | 生成示例工作流、生成 `push.bat`（含 `h3_system_prompt.txt`） | `make_batch_tagger_example.py`、`make_push_bat.py` |
 | 历史迁移 | 6 | widgets 数量演进时的一次性脚本，**均已应用** | `update_wf_17widgets.py` |
-| 其他 | 3 | 只读检查、中文 token 比测量、备份同步 | `check_example_quant.py`、`sync_devtools_to_repo.py` |
-| 基准原始输出 | 5 `.out` + 4 `.txt` | 基准脚本的原始日志，是 README 里那些数字的证据 | `bench_real_8bit.out` |
+| 其他工具 | 10 | 只读检查、中文 token 比测量、**钉 P-core**、备份同步 | `pin_comfyui_pcores.py`、`sync_devtools_to_repo.py` |
+| 原始日志 | 37 `.txt` + 5 `.out` | 脚本的真实输出，是 README / 诊断报告里那些数字的证据 | `_tagger_out.txt`、`bench_real_8bit.out` |
 | 工作流 JSON | 9 | 见「已知注意点」第 1 条 | `h3_i2va_with_llm.json` |
 | 文档 | 4 | 工作区的四份说明，含诊断报告 | `诊断报告_扩写变慢.md`、`README_h3_video.md` |
 
 ## 运行前提（硬约束）
 
-- 本机 ComfyUI 装在 `E:\AI\ComfyUI-aki-v3`。**14 个脚本把 `CV` 硬编码成该路径**，
+- 本机 ComfyUI 装在 `E:\AI\ComfyUI-aki-v3`。**47 个脚本把 `CV` 硬编码成该路径**，
   换机器必须逐个改，或备好同名目录。
+  （例外：`pin_comfyui_pcores.py` 只吃 PID，**不含任何硬编码路径**，可直接移植。）
 - 必须用 ComfyUI 自带解释器：`E:\AI\ComfyUI-aki-v3\python\python.exe`（不是系统 Python）。
 - 需要同样的模型：`minimax_h3`（视频工作流）、`Qwen3.5 / Qwen3-VL`（节点）。
 
 > 这批脚本是**环境绑定的实验工具**，不是可移植的测试套件。备份的意义是保住代码和证据，
 > 不是让它们在任意机器上一键跑通。
 
-## 最常用的四条命令
+## 最常用的五条命令
 
 ```bash
 cd devtools
@@ -48,6 +51,7 @@ E:\AI\ComfyUI-aki-v3\python\python.exe test_qwen35_tagger.py        # 批量打�
 E:\AI\ComfyUI-aki-v3\python\python.exe test_qwen35_v6_bilingual.py  # 扩写节点
 E:\AI\ComfyUI-aki-v3\python\python.exe verify_h3_workflows.py       # 期望输出「总问题数: 0」
 E:\AI\ComfyUI-aki-v3\python\python.exe verify_qwen35_patch.py       # 复现 patch_embed 修复，需要显卡
+E:\AI\ComfyUI-aki-v3\python\python.exe pin_comfyui_pcores.py --set  # 把 ComfyUI 钉到 P-core（见下）
 ```
 
 ## 已知注意点
@@ -60,7 +64,15 @@ E:\AI\ComfyUI-aki-v3\python\python.exe verify_qwen35_patch.py       # 复现 pat
 2. `WF` 变量（工作流查找目录）在同步时被改写为「脚本自身所在目录」，
    于是本目录下的脚本能在任意位置定位同级 JSON。工作区里的原件仍是绝对路径写法。
 3. **未备份**：`*.bak_attention`（4 个示例工作流的修改前快照，与 `../examples/` 重复）、
-   `__pycache__/`，以及一个早前 selftest 留下的垃圾文件 `returns`。
+   `__pycache__/`、`_tmp_*`（见 `.gitignore`，`verify_qwen35_patch.py` 的临时基准文件），
+   一个早前 selftest 留下的垃圾文件 `returns`，
+   **`_pyspy_native.json`（py-spy `--native` 的原始采样 dump，3.2 MB）** ——
+   它对应的结论是错的（采样偏线程），但「为什么读错了」写在诊断报告第十四章里，
+   要复现重跑 `analyze_pyspy.py` 即可，不必把 3 MB 原始样本塞进仓库；
+   以及 **`_fla_probe*/`（4 个目录、700+ 文件、约 7 MB）** ——
+   那是探 fla 版本兼容性时解包在工作区的**第三方包本体**
+   （fla 0.5.2 / 0.2.2 / 0.3.2 / 0.4.2 的 site-packages），不是本项目的代码。
+   同步脚本按前缀 `_fla_probe` 排除（`EXCLUDE_DIR_PREFIXES`）。
 4. `update_wf_*.py` / `update_existing_enhancers.py` 是历史迁移脚本，已经跑过了，
    留着只为记录 widgets 顺序的演进过程，正常不需要再执行。
 5. 本目录会随 git 一起进 ComfyUI Registry 的发布包（如果将来上架）。

@@ -1,0 +1,351 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+==========================================================================
+A) bilingual=en_then_zh：两阶段接线
+==========================================================================
+  generate 调用次数=2  apply_chat_template 次数=2
+  返回类型=tuple  长度=2
+  [OK ] 返回两个输出  -> 2
+  [OK ] 英文输出是三段式
+  [OK ] 英文输出无中文
+  [OK ] 中文输出非空  -> 127 字符
+  [OK ] 中文输出含中文
+  [OK ] 跑到两次 generate  -> 2
+  [OK ] 模板被调用两次  -> 2
+  [OK ] 两次都有进度回调  -> [True, True]
+  [OK ] 英文轮保持采样解码  -> True
+  [OK ] 英文轮温度保持 0.4  -> 0.4
+  [OK ] 翻译轮改为贪心解码  -> False
+  [OK ] 翻译轮不再传 temperature  -> None
+  [OK ] 翻译轮 max_new_tokens 受预算约束（本例 32）  -> 32
+  [OK ] 翻译阶段不带图片
+  [OK ] 翻译阶段带 system prompt
+  [OK ] 翻译 system prompt 是预览专用
+  [OK ] 用户消息里嵌了英文提示词原文
+  [OK ] 中文标签被还原成英文  -> integrated_multimodal_description:[Shot 1] 电影感
+  [OK ] 第二段标签也被还原
+  [OK ] 第三段标签也被还原
+
+  进度推送 70 次
+  序列头部: [2, 3, 35, 38, 39, 39]
+  序列尾部: [98, 99, 100, 100]
+  [OK ] 进度单调不减
+  [OK ] 终点 = 100  -> 100
+  [OK ] 上限不超过 100
+  [OK ] 英文段先验宽度生效（tick = 32）  -> 32
+  [OK ] 英文段只占先验宽度，不到分界点  -> 60 < 69.0
+  [OK ] 跑完英文后按实测重锚定一次  -> [69]
+  [OK ] 中文阶段 tick = 32 + 收尾 1  -> 33
+  [OK ] 两阶段间有分界（英文末值 < 中文首值）  -> 60 < 70
+  阶段日志:
+     [Qwen35] 释放显存：卸载其他模型…
+     [Qwen35] 正在加载模型：model（量化=8bit，首次或换模型约 30~90s，请耐心等待）
+     [Qwen35] 模型加载完成，用时 0.0s
+     [Qwen35] mode=text2video  images=0
+     [Qwen35] 开始生成英文提示词：输入 20 tok，上限 32 tok
+     [Qwen35] 生成 █░░░░░░░░░░░░░░░░░░░░░   3.1%  1/32 tok    0.5 tok/s  剩余 ~ 67.
+     [Qwen35] 生成 ██████████████████████ 100.0%  32/32 tok   14.7 tok/s
+     [Qwen35] 英文提示词完成：32 tok / 205 字符
+     [Qwen35] 开始翻译中文预览…（预算 32 tok = 英文 32 tok 的 1.00 倍，贪心解码）
+     [Qwen35] 生成 ██████████████████████ 100.0%  32/32 tok   14.2 tok/s
+     [Qwen35] 中文预览完成：32 tok / 127 字符（prefill 0.0s / 解码 0.0s = 380047.5 tok/s）（触
+     [Qwen35] ========== 耗时分解 ==========
+  卸载其他模型      :   0.04s
+  加载扩写模型      
+  [OK ] 有『开始生成英文提示词』
+  [OK ] 有『英文提示词完成』
+  [OK ] 有『开始翻译中文预览』
+  [OK ] 有『中文预览完成』
+  [OK ] 耗时分解含翻译行
+  [OK ] 耗时分解含英文行
+
+==========================================================================
+B) bilingual=off：退回单语，行为不变
+==========================================================================
+  generate 调用次数=1
+  [OK ] 只跑一次 generate  -> 1
+  [OK ] 模板只调一次  -> 1
+  [OK ] 第二个输出为空串  -> ''
+  [OK ] 英文输出正常
+  [OK ] 单语时进度仍到 100
+  [OK ] 单语时生成段独占 62 点（38 -> 100）  -> 生成段 tick 17 次
+  [OK ] 单语时不打翻译日志
+  [OK ] 单语时耗时分解标注 bilingual=off
+
+==========================================================================
+C) 中断发生在翻译阶段
+==========================================================================
+  [OK ] 翻译阶段中断能抛出  -> InterruptProcessingException
+  中断前进度尾部: [76, 77, 78, 100]
+  [OK ] 中断时进度被收尾到 100  -> [100]
+  [OK ] 中断发生在中文段（进度 > 分界点）  -> 最大 100
+
+==========================================================================
+D) _restore_zh_labels 标签还原
+==========================================================================
+  [OK ] 还原 综合多模态描述：内容…  -> 得到 'integrated_multimodal_description:内容'
+  [OK ] 还原 综合多模态描述（inte…  -> 得到 'integrated_multimodal_description:内容'
+  [OK ] 还原 整体声音环境: 内容…  -> 得到 'overall_soundscape: 内容'
+  [OK ] 还原 非叙事音乐：N/A…  -> 得到 'non_diegetic_music:N/A'
+  [OK ] 还原 画外音乐：钢琴独奏…  -> 得到 'non_diegetic_music:钢琴独奏'
+  [OK ] 英文原文不受影响
+
+==========================================================================
+E) widgets 顺序（防止旧工作流错位）
+==========================================================================
+  widgets 顺序:
+    [ 0] model_name
+    [ 1] system_prompt
+    [ 2] user_prompt
+    [ 3] quantization
+    [ 4] attention
+    [ 5] enable_thinking
+    [ 6] mode
+    [ 7] max_images
+    [ 8] keep_model_loaded
+    [ 9] unload_other_models
+    [10] temperature
+    [11] max_new_tokens
+    [12] seed
+    [13] custom_model_path
+    [14] max_image_side
+    [15] show_progress
+    [16] progress_interval
+    [17] bilingual
+  [OK ] 连线输入只有 backend（不占 widgets 槽位）  -> ['backend']
+  [OK ] widgets 总数 = 18（backend 是连线输入，不计数）  -> 18
+  [OK ] bilingual 在末位  -> bilingual
+  [OK ] prompt_zh 是新输出且不挤占旧端口  -> ('prompt', 'prompt_zh')
+  [OK ] 签名与 widgets 顺序一致
+  [OK ] bilingual 的 INPUT_TYPES 默认 = off  -> off
+  [OK ] enhance 签名默认 = off
+  [OK ] bilingual 的候选值仍是 off / en_then_zh  -> ['off', 'en_then_zh']
+
+==========================================================================
+F) 中文预算换算 _zh_budget（拦住『跑满上限』的空转）
+==========================================================================
+  [OK ] _zh_budget(0,1024) = 1024  [英文为空 → 退回用户上限]  -> 得到 1024
+  [OK ] _zh_budget(32,32) = 32  [用户上限更小 → 绝不越界]  -> 得到 32
+  [OK ] _zh_budget(10,1024) = 96  [极短英文 → 兜到最小预算 96]  -> 得到 96
+  [OK ] _zh_budget(32,1024) = 115  [32*1.6+64 = 115]  -> 得到 115
+  [OK ] _zh_budget(500,1024) = 864  [500*1.6+64 = 864]  -> 得到 864
+  [OK ] _zh_budget(1024,1024) = 1024  [英文已触上限 → 中文不再放大]  -> 得到 1024
+  [OK ] 预算永不超用户上限
+  [OK ] 预算随英文长度单调不减
+
+==========================================================================
+G) 长英文：预算放大 + 分界点按实测重算
+==========================================================================
+  英文 out_len=64 -> 翻译轮 max_new_tokens=166
+  [OK ] 英文 64 tok 时中文预算 = 166（64*1.6+64）  -> 166
+  [OK ] 中文预算大于英文 token（中文更吃 token）
+  [OK ] 长英文轮进度仍单调到 100  -> len=134 尾=100
+  [OK ] rescale 估错也不会让进度条回退  -> 59.7 -> 59.7
+  [OK ] rescale 前进时正常跳转  -> 80.0
+
+==========================================================================
+H) 英文回声清理 _drop_english_echo
+==========================================================================
+  回声长度 334 -> 清理后 127
+  [OK ] 砍掉抄回来的英文，只剩中文段  -> integrated_multimodal_description:[Shot 1] 电
+  [OK ] 清理后不含英文原文
+  [OK ] 正常输出（标签在 0 位）原样不动
+  [OK ] 整段没中文时不猜（原样返回）
+  [OK ] 回声清理在 enhance 主链路里生效（中文输出不含英文原文）
+
+==========================================================================
+I) EOS 补全 _eos_token_ids
+==========================================================================
+  并集得到的 EOS ids = [151645, 151643]
+  [OK ] 并入 config 的 EOS 与分词器结束符  -> [151645, 151643]
+  [OK ] 未知 token 不会被误当 EOS（<|eot_id|> → id 0）  -> [151645, 151643]
+  [OK ] 拿不到 EOS 时返回空列表（该参数不传）
+  [OK ] 假件场景下 generate 没收到 eos_token_id（不引入噪音）  -> None
+  [OK ] EOS 真的被传进 generate  -> [151645, 151643]
+  [OK ] 日志打印了 EOS ids
+
+==========================================================================
+J) 提速诊断（显存/设备/速度体检）
+==========================================================================
+  device_map 汇总 = {'cuda:0': 2, 'cpu': 2}
+  [OK ] device_map 汇总按设备计数  -> {'cuda:0': 2, 'cpu': 2}
+  [OK ] 没有 hf_device_map 时返回 None
+  [OK ] 能找出视觉塔在 cpu  -> cpu
+  [OK ] 找不到视觉塔时返回 None
+  mm=None 时探针返回 (0.0, 23.99, 0.0) GiB
+  [OK ] 拿不到 model_management 时可用显存/内存为 0  -> (0, 25756696576, 0)
+  [OK ] 显存总量独立于 mm（torch 直接读得到）  -> 25756696576
+  [OK ] 探针能从 get_free_memory 取到数值（int 与 tuple 两种返回都吃）  -> 7516192768
+  [OK ] _fmt_gib 格式正确  -> 2.0GiB
+  [OK ] 正常速度（50 tok/s）不告警
+  [OK ] token 太少（<16）不下结论
+  [OK ] 零耗时不下结论
+  [OK ] 体检线设在合理区间（bf16 正常约 18~22 tok/s，不能高于它）  -> 14.0
+  [OK ] 层落在 CPU → 归因到 CPU 摊派  ->   ⚠ 解码只有 0.8 tok/s：本模型有 3.2GiB 权重被摊到 CPU 上（见上面
+  [OK ]   并报出实际落在 CPU 的 GiB 数  ->   ⚠ 解码只有 0.8 tok/s：本模型有 3.2GiB 权重被摊到 CPU 上（见上面「权重分布」行）。这是硬
+  [OK ] 层全在 GPU + 8bit → 归因到量化档  ->   ⚠ 解码只有 0.8 tok/s：层都装进显卡了、不是显存问题，主因就是 quantiz
+  [OK ]   给出 none/4bit/8bit 三档实测对照  ->   ⚠ 解码只有 0.8 tok/s：层都装进显卡了、不是显存问题，主因就是 quantization=8bit 本身（本机实测：none 
+  [OK ]   指出 8bit 的另一半代价在「加载」而不是解码  ->   ⚠ 解码只有 0.8 tok/s：层都装进显卡了、不是显存问题，主因就是 quantization=8bit 本身（本机实测：none 18.5~21.6 tok/s、4bit
+  [OK ]   建议改用 4bit（受控实测 4bit 才划算）  ->   ⚠ 解码只有 0.8 tok/s：层都装进显卡了、不是显存问题，主因就是 quantization=8bit 本身（本机实测：none 
+  [OK ]   4bit 建议带真机整轮数字（54.06 / 51.85）  ->   ⚠ 解码只有 0.8 tok/s：层都装进显卡了、不是显存问题，主因就是 quantization=8bit 本身（本机实测：none 18.5~21.6 tok/s、4bit
+  [OK ]   显存够则直接 none  ->   ⚠ 解码只有 0.8 tok/s：层都装进显卡了、不是显存问题，主因就是 quantization=8bit 本身（本机实测：none 
+  [OK ] 层全在 GPU + 4bit → 明说 4bit 解释不了  ->   ⚠ 解码只有 0.8 tok/s：quantization=4bit 被选中，但 4bi
+  [OK ] 两者都不是 → 承认原因不在已排查范围内  ->   ⚠ 解码只有 0.8 tok/s：层全在 GPU 上、也没用量化，说明慢的原因不在已排查
+  [OK ]   并叫停「调 max_image_side」这个错动作  ->   ⚠ 解码只有 0.8 tok/s：层全在 GPU 上、也没用量化，说明慢的原因不在已排查的这几处（CPU 摊派 / 量化档 / 线性注意
+  [OK ] 显式 quantization 覆盖模块级 _CUR_QUANT
+  [OK ] _fmt_gib: GiB 档  -> 2.0GiB
+  [OK ] _fmt_gib: MiB 档  -> 5MiB
+  [OK ] _fmt_gib: KiB 档  -> 2KiB
+  [OK ] 参数统计: 设备分布  -> {'cpu': 4000}
+  [OK ] 参数统计: 精度分布  -> {'float32': 4000}
+  [OK ] 参数统计: 无参数返回 None
+  [OK ] 参数统计: 可只统计子模块
+  [OK ] _vision_module 找到 visual
+  [OK ] _vision_module 找不到返回 None
+  [OK ] _vision_device 读到 cpu  -> cpu
+  [OK ] _fmt_stat 大体量排前  -> cuda:0 2.0GiB  cpu 1KiB
+  [OK ] _QUANT_SKIP_MODULES 含视觉塔前缀  -> ('model.visual', 'visual', 'lm_head', 'in_proj_a', 'in_proj_b')
+  [OK ] _QUANT_SKIP_MODULES 含 lm_head（补回被丢的默认保护）  -> ('model.visual', 'visual', 'lm_head', 'in_proj_a', 'in_proj_b')
+  [OK ] 视觉塔层不会被量化
+  [OK ] 视觉塔 merger 不会被量化
+  [OK ] lm_head 不会被量化
+  [OK ] LLM 层仍然会被量化（跳过规则没有误伤）  -> language_model 层被误跳过
+  [OK ] 视觉 token 计数正确  -> 842
+  [OK ] 无 image_grid_thw 时返回 0
+  [OK ] inputs 为 None 时返回 0（不抛异常）
+  [OK ] 耗时分解含 prefill 行
+  [OK ] 耗时分解含解码行
+  [OK ] 完成日志里带了 prefill/解码拆分
+
+==========================================================================
+K) 注意力后端解析（flash-attn 探测）
+==========================================================================
+  [OK ] 选项含 auto / flash_attention_2 / sdpa / eager  -> ('auto', 'flash_attention_2', 'sdpa', 'eager')
+  [OK ] attention 默认值是 auto（装了 flash-attn 就自动走 flash 路径）  -> (['auto', 'flash_attention_2', 'sdpa', 'eager'], {'default': 'auto'})
+  [OK ] 最低版本要求是 2.3.3（与 transformers 一致）  -> (2, 3, 3)
+  当前环境 flash-attn = (2, 8, 3)
+  [OK ] _flash_attn_version 返回 None 或元组  -> (2, 8, 3)
+  [OK ] _flash_attn_available 与版本一致  -> (2, 8, 3) / True
+  [OK ] 未装 flash-attn 时 auto → sdpa  -> sdpa
+  [OK ] 未装时给出说明  -> auto → sdpa（未装 flash-attn）
+  [OK ] 装了 flash-attn 2.8.3 时 auto → flash_attention_2  -> flash_attention_2
+  [OK ] 说明里带上版本号  -> auto → flash_attention_2（flash-attn 2.8.3）
+  [OK ] flash-attn 版本低于 2.3.3 时退回 sdpa  -> sdpa
+  [OK ] 版本过低时说明里点名 2.3.3  -> auto → sdpa（flash-attn 2.1.0 低于要求的 2.3.3）
+  [OK ] 显式 flash_attention_2 原样透传  -> flash_attention_2 / ''
+  [OK ] 显式 sdpa 原样透传  -> sdpa / ''
+  [OK ] 显式 eager 原样透传  -> eager / ''
+  [OK ] 空串按 auto 处理
+  [OK ] None 按 auto 处理
+  [OK ] 缓存键用解析后的后端而不是原始选项
+  [OK ] flash 初始化失败时退回 sdpa（不整个跑挂）
+
+==========================================================================
+L) patch_embed 的 Conv3d -> GEMM 等价替换
+==========================================================================
+  [OK ] patch_embed 内部确实是 Conv3d  -> Conv3d
+  [OK ] Conv3d 的 kernel 与 stride 相同（是输出的前提）  -> (2, 16, 16) / (2, 16, 16)
+  [OK ] 原始实现输出形状 (8, 64)  -> (8, 64)
+  [OK ] 补丁已生效（首次返回 True）
+  [OK ] 补丁幂等（第二次返回 False）
+  [OK ] 类 forward 已被替换
+  Conv3d vs GEMM 最大绝对误差 = 2.146e-06
+  [OK ] 2D 输入下与原始 Conv3d 数值一致（误差 < 1e-5）  -> 2.146e-06
+  [OK ] 5D 输入下也一致  -> 2.146e-06
+  [OK ] 输出形状与原始一致
+  [OK ] 权重没有被复制成新张量（仍是同一块内存的视图）
+  [OK ] state_dict 键名不变（仍含 proj.weight / proj.bias）  -> ['proj.bias', 'proj.weight']
+  [OK ] QWEN35_NO_PATCH_EMBED_FIX=1 时跳过补丁
+  [OK ] 体检线常量存在
+
+==========================================================================
+M) 补丁 v2 —— 按结构识别 + 打到模型实例上（Qwen3.5 回归）
+==========================================================================
+  [OK ] kernel==stride / padding=0 / groups=1 判为等价
+  [OK ] kernel != stride 判为不等价
+  [OK ] 带 padding 判为不等价
+  [OK ] groups != 1 判为不等价
+  [OK ] 非 Conv3d 判为不等价
+  [OK ] 实例级扫描认出 Qwen3.5 的 patch_embed  -> 1 个
+  [OK ] 实例 forward 被换成 GEMM
+  [OK ] 幂等：重复扫描计数不翻倍（返回的是该模型实例总数）
+  [OK ] 幂等：forward 仍指向同一个替换实现
+  [OK ] Qwen3.5 实例替换后数值仍等价（误差 < 1e-5）  -> 0.000e+00
+  [OK ] 输入布局不对时报错而不是静默出错
+  [OK ] 类名不含 patchembed 的模块不会被替换（名字守卫）
+  [OK ] 传 model 时该实例被计入替换数  -> instances=1
+  [OK ] 再传一次返回 False（已打过）
+  [OK ] 类级目标清单覆盖 Qwen3-VL 与 Qwen3.5 两个族
+
+==========================================================================E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\bitsandbytes\autograd\_functions.py:123: UserWarning: MatMul8bitLt: inputs will be cast from torch.bfloat16 to float16 during quantization
+  warnings.warn(f"MatMul8bitLt: inputs will be cast from {A.dtype} to float16 during quantization")
+
+N) 线性注意力快路径体检（Qwen3.5 混合架构 / torch 回退）
+==========================================================================
+  [OK ] 体检线常量存在  -> 15.0
+  [OK ] 触发线低于 bf16 正常值（12 < line < 20）  -> 15.0
+  [OK ] 扫描只统计含 recurrent_gated_delta_rule 的模块  -> (2, 3)
+  [OK ] 扫描结果写回模块级变量
+  [OK ] 非混合架构模型扫出 (0, 0)
+  [OK ] 不是混合架构 -> 加载期无提示
+  [OK ] 全部走融合内核 -> 提示里说 fla 已生效  -> [Qwen35] 线性注意力：24 层全部走融合内核（fla 已生效）
+  [OK ] 全部走回退 -> 提示里给出层数与 fla 安装指引
+  [OK ] 部分走回退 -> 提示里报出回退层数  -> [Qwen35] 线性注意力：24 层里 12 层走 torch 回退（12 层已用融合内核） —— 这是 Qwen3.5 混合架构在本机 
+  [OK ] bf16 正常速率（20.9 tok/s）不该提示
+  [OK ] 解码偏慢（6.0 tok/s）且全走回退 -> 给出定量提示
+  [OK ] 提示里含 3365 kernel/token 的实测口径  ->   ℹ 解码 6.0 tok/s：本模型有 24 层线性注意力（Gated DeltaNet），其中 24 层走的是 t
+  [OK ] 提示里含「不要装 flash-linear-attention」的说明  ->   ℹ 解码 6.0 tok/s：本模型有 24 层线性注意力（Gated DeltaNet），其中 24 层走的是 t
+  [OK ] 提示把「慢」指向 CPU 的 P-core/E-core，并给出实测数字  -> （HIGH 7.9 / ABOVE_NORMAL 8.6）。解法：把 ComfyUI 进程钉到 P-core，见插件 devtools/pin_comfyui_pcores.py。
+  [OK ] 提示给出可执行的解法（钉 P-core 的工具名）  -> （HIGH 7.9 / ABOVE_NORMAL 8.6）。解法：把 ComfyUI 进程钉到 P-core，见插件 devtools/pin_comfyui_pcores.py。
+  [OK ] 解码够快时不提示
+  [OK ] 样本太小不提示
+  [OK ] 全部融合时不提示
+  [OK ] 非混合架构不提示
+
+==========================================================================
+O) bnb 量化档：int8 阈值开关 + skip 列表（2026-10-07 受控对照结论）
+==========================================================================
+  [OK ] _INT8_THRESHOLD 已设为 0.0  -> 0.0
+  [OK ] 0.0 会落到 bnb 的 else 分支（纯 int8_scaled_mm）
+  [OK ] skip 列表含 model.visual
+  [OK ] skip 列表含 visual
+  [OK ] skip 列表含 lm_head
+  [OK ] skip 列表含 in_proj_a
+  [OK ] skip 列表含 in_proj_b
+  [OK ] transformers 接受 llm_int8_threshold=0.0 并原样保留  -> 0.0
+  [OK ] 量化方式识别为 llm_int8
+  [OK ] 线性注意力 in_proj_a 被跳过（后缀匹配真的生效）
+  [OK ] 线性注意力 out_proj 仍被量化（没误伤）
+  [OK ] MLP 投影仍被量化
+  [OK ] 视觉塔被跳过
+  [OK ] threshold=0.0 已挂到 state 上  -> 0.0
+  [OK ] threshold=0.0 输出是有限值
+  [OK ] threshold=0.0 数值与 bf16 接近（相对误差 < 5e-2）  -> 8.065e-03
+  [OK ] threshold=6.0 同样正确（两种分支都可用）  -> 8.065e-03
+  [OK ] 8bit 提示里给了 4bit 的实测结论  ->   ⚠ 解码只有 6.0 tok/s：层都装进显卡了、不是显存问题，主因就是 quantizatio
+  [OK ] 8bit 提示里提到 threshold 已调
+  [OK ] 8bit 提示里含 bf16 带宽实测数字
+  [OK ] 8bit 提示里含 int8 内核实测带宽
+  [OK ] 4bit 慢时明确说 4bit 解释不了  ->   ⚠ 解码只有 6.0 tok/s：quantization=4bit 被选中，但 4bit 在同
+  [OK ] 正常速度不提示（8bit）
+  [OK ] 正常速度不提示（4bit）
+
+==========================================================================
+P) 真机 A/B 定案：4bit 54.06s / 8bit 71.01s / none 51.85s —— 差在加载，不在解码
+==========================================================================
+  [OK ] 体检线高于 8bit 实测上限 13.1（否则 8bit 触发不了体检）  -> 14.0
+  [OK ] 体检线低于 4bit 实测下限 17.3（否则会误报 4bit）  -> 14.0
+  [OK ] 真机 8bit（195 tok / 15.72s）现在会被判为慢
+  [OK ] 真机 4bit（286 tok / 16.51s）不会被误报
+  [OK ] 加载期 8bit 提示带真机整轮对照（71.01 / 54.06）
+  [OK ] 加载期提示点明 14.3s 是加载开销
+  [OK ] 加载期提示仍保留 llm_int8_threshold 与 4bit 指向
+  [OK ] 模块 docstring 已换成真机三档对照
+  [OK ] 「8bit 解码慢 3~8 倍」这个旧说法已从源码里清掉
+  [OK ] 8bit 主因命中 → 只给 1 条（压掉 fla 建议）  -> 1
+  [OK ]   留下的是量化归因那条
+  [OK ]   且不含「装 fla」的建议  -> ['  ⚠ 解码只有 12.4 tok/s：层都装进显卡了、不是显存问题，主因就是 quantization=8bit 本身（本机实测：none 18.5~21
+  [OK ] 4bit 慢时两条都给（fla 建议不被压）  -> 2
+
+==========================================================================
+全部通过

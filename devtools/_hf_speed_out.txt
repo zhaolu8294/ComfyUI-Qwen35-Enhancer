@@ -1,0 +1,94 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+
+====================================================================================
+STEP 0  加载 HF 9B（quant=none / attn=auto）
+====================================================================================
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:00<10:17,  1.23it/s]Loading weights:   0%|          | 2/760 [00:01<08:07,  1.56it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:45, 16.24it/s]Loading weights:   4%|▍         | 29/760 [00:01<00:21, 33.33it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:14, 50.31it/s]Loading weights:   7%|▋         | 54/760 [00:01<00:11, 61.24it/s]Loading weights:   9%|▉         | 68/760 [00:01<00:09, 76.08it/s]Loading weights:  11%|█         | 81/760 [00:01<00:07, 86.22it/s]Loading weights:  13%|█▎        | 96/760 [00:02<00:06, 98.45it/s]Loading weights:  14%|█▍        | 108/760 [00:02<00:06, 101.67it/s]Loading weights:  16%|█▌        | 121/760 [00:02<00:06, 104.63it/s]Loading weights:  18%|█▊        | 134/760 [00:02<00:05, 106.16it/s]Loading weights:  20%|█▉        | 149/760 [00:02<00:05, 112.78it/s]Loading weights:  21%|██        | 161/760 [00:02<00:05, 112.20it/s]Loading weights:  23%|██▎       | 174/760 [00:02<00:05, 113.29it/s]Loading weights:  25%|██▍       | 187/760 [00:02<00:05, 113.28it/s]Loading weights:  26%|██▋       | 201/760 [00:03<00:04, 116.06it/s]Loading weights:  28%|██▊       | 213/760 [00:03<00:04, 113.79it/s]Loading weights:  30%|██▉       | 226/760 [00:03<00:04, 113.26it/s]Loading weights:  32%|███▏      | 241/760 [00:03<00:04, 117.58it/s]Loading weights:  34%|███▎      | 255/760 [00:03<00:04, 117.70it/s]Loading weights:  35%|███▌      | 267/760 [00:03<00:04, 114.41it/s]Loading weights:  37%|███▋      | 280/760 [00:03<00:04, 113.00it/s]Loading weights:  39%|███▊      | 293/760 [00:03<00:04, 112.04it/s]Loading weights:  40%|████      | 307/760 [00:03<00:03, 114.03it/s]Loading weights:  42%|████▏     | 319/760 [00:04<00:03, 112.48it/s]Loading weights:  44%|████▍     | 333/760 [00:04<00:03, 114.37it/s]Loading weights:  46%|████▌     | 346/760 [00:04<00:03, 112.80it/s]Loading weights:  48%|████▊     | 361/760 [00:04<00:03, 117.55it/s]Loading weights:  49%|████▉     | 373/760 [00:04<00:03, 114.32it/s]Loading weights:  51%|█████     | 385/760 [00:04<00:03, 110.91it/s]Loading weights:  53%|█████▎    | 400/760 [00:04<00:03, 116.33it/s]Loading weights:  54%|█████▍    | 414/760 [00:04<00:02, 118.35it/s]Loading weights:  56%|█████▌    | 426/760 [00:04<00:02, 116.30it/s]Loading weights:  74%|███████▍  | 565/760 [00:05<00:00, 465.14it/s]Loading weights:  93%|█████████▎| 709/760 [00:05<00:00, 735.66it/s]Loading weights: 100%|██████████| 760/760 [00:05<00:00, 145.41it/s]
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+  加载完成 13.4s  (新加载=True)
+
+====================================================================================
+STEP 1  真实层结构
+====================================================================================
+  架构        : ['Qwen3_5ForConditionalGeneration']
+  模型类      : Qwen3_5ForConditionalGeneration  (transformers.models.qwen3_5.modeling_qwen3_5)
+  隐藏层数    : ?
+  权重精度    : torch.bfloat16  设备 cuda:0
+  层列表      : model.language_model.layers  共 32 层
+    [ 0] linear_attn  = Qwen3_5GatedDeltaNet
+    [ 1] linear_attn  = Qwen3_5GatedDeltaNet
+    [ 2] linear_attn  = Qwen3_5GatedDeltaNet
+    [ 3] self_attn    = Qwen3_5Attention
+    [ 4] linear_attn  = Qwen3_5GatedDeltaNet
+    [ 5] linear_attn  = Qwen3_5GatedDeltaNet
+    [31] self_attn    = Qwen3_5Attention
+    ... 共 32 层
+  注意力实现统计: {'Qwen3_5GatedDeltaNet': 24, 'Qwen3_5Attention': 8}
+  fla(flash-linear-attention): **未装**（线性注意力只能走 torch 回退）
+  预设解析失败(_resolve_tag_preset() missing 1 required positional argument: 'system_prompt')，改用最简提示词
+
+====================================================================================
+STEP 2  预热（1 次，不计入）
+====================================================================================
+  24 tok / 2.11s  (prefill 1.04s、解码 0.98s)
+
+====================================================================================
+STEP 3  profile：带图生成 32 token
+====================================================================================
+  本次 32 tok：prefill 0.63s、解码 2.08s
+  解码速度 15.4 tok/s   （每 token 64.9 ms）
+
+====================================================================================
+STEP 4  CUDA 时间 TOP 25（按算子聚合）
+====================================================================================
+  算子                                                        次数      总耗时ms      占比      每次us
+  aten::mm                                                7968      638.2   34.5%      80.1
+  _ZN8internal5gemvx6kernelIii13__nv_bfloat16S2_S2_fLb    5430      465.1   25.1%      85.7
+  _ZN7cutlass7Kernel2I66cutlass_80_tensorop_bf16_s1681     216       77.7    4.2%     359.7
+  _ZN8internal5gemvx6kernelIii13__nv_bfloat16S2_S2_fLb    2208       73.0    3.9%      33.1
+  aten::copy_                                            27213       61.8    3.3%       2.3
+  aten::mul                                              21447       46.5    2.5%       2.2
+  aten::addmm                                              111       28.0    1.5%     252.5
+  _ZN2at6native18elementwise_kernelILi128ELi2EZNS0_22g   10711       27.8    1.5%       2.6
+  _ZN2at6native27unrolled_elementwise_kernelIZZZNS0_23   11754       25.2    1.4%       2.1
+  aten::bmm                                               1904       24.7    1.3%      13.0
+  ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f      32       22.2    1.2%     693.4
+  flash_attn::_flash_attn_varlen_forward                    27       21.8    1.2%     807.6
+  _ZN5flash16flash_fwd_kernelI23Flash_fwd_kernel_trait      27       21.8    1.2%     807.6
+  aten::add                                              14291       20.6    1.1%       1.4
+  ampere_bf16_s16816gemm_bf16_128x64_ldg8_relu_f2f_tn       56       19.1    1.0%     340.8
+  aten::sum                                               4827       15.6    0.8%       3.2
+  ampere_sgemm_128x128_nn                                 1128       14.5    0.8%      12.8
+  _ZN2at6native18elementwise_kernelILi128ELi2EZNS0_22g    5128       11.9    0.6%       2.3
+  _ZN2at6native18elementwise_kernelILi128ELi4EZNS0_22g    2638       11.1    0.6%       4.2
+  ampere_bf16_s1688gemm_bf16_128x128_ldg8_relu_f2f_sta      55        8.9    0.5%     161.6
+  aten::mean                                              3360        8.2    0.4%       2.4
+  _ZN2at6native13reduce_kernelILi512ELi1ENS0_8ReduceOp    3324        8.2    0.4%       2.5
+  _ZN2at6native29vectorized_elementwise_kernelILi4EZNS    5724        8.0    0.4%       1.4
+  aten::cat                                               2514        7.8    0.4%       3.1
+  _ZN2at6native13reduce_kernelILi128ELi4ENS0_8ReduceOp    1857        7.4    0.4%       4.0
+                                                                   1850.5
+
+====================================================================================
+STEP 5  kernel 调用次数（小算子淹没的判据）
+====================================================================================
+  CUDA 事件总数（≈kernel 调用数）: 107674
+  平均每个输出 token           : 3365 个 kernel
+  平均每个 kernel 耗时          : 17.2 us
+  单次 ≥100us 的算子种类        : 8 / 180
+
+====================================================================================
+STEP 6  纯文本生成对照（不带图，排除视觉塔）
+====================================================================================
+  纯文本 32 tok / 2.08s = 15.4 tok/s
+  （若这里也慢，瓶颈与视觉塔/图像无关，在解码实现本身）
+
+====================================================================================
+STEP 7  收尾
+====================================================================================
+  已释放

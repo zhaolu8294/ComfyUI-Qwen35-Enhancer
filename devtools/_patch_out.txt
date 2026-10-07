@@ -1,0 +1,48 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+==========================================================================
+A) 两个模型族的 patch_embed 结构是否一致
+==========================================================================
+  Qwen3-VL 实现可用 : True
+  Qwen3.5  实现可用 : True
+  [OK ] transformers 里 Qwen3.5 的实现存在
+  [OK ] Qwen3.5 patch_embed 内部也是 Conv3d  -> Conv3d
+  [OK ] Qwen3.5 的 kernel 与 stride 相同（替换的前提）  -> (2, 16, 16) / (2, 16, 16)
+  [OK ] Qwen3.5 的 padding=0 / dilation=1 / groups=1（等价性的另外三个前提）
+  [OK ] 两个模型族的 Conv3d 参数形状完全一致  -> (1152, 3, 2, 16, 16)
+  [OK ] 两个类是不同对象（所以按类名补丁会漏）
+
+==========================================================================
+B) 复现旧行为：只补 Qwen3-VL 的类，Qwen3.5 是否漏网；实例级能否救回
+==========================================================================
+  [OK ] 旧做法（只补 Qwen3-VL 类）后，Qwen3.5 的类仍未被打补丁
+  [OK ] 而类级标志会误报成功 —— 这正是日志说「已换 GEMM」却依然慢的原因
+  [OK ] 实例级扫描认出了 Qwen3.5 的 patch_embed  -> 替换 1 个
+  [OK ] 实例 forward 确实被换掉
+  [OK ] 打上标记，便于幂等
+  [OK ] 幂等：再扫一次计数不翻倍（返回该模型实例总数）
+  [OK ] 幂等：forward 仍指向同一个替换实现
+  [OK ] 换模型后实例计数被刷新而不是累加  -> 1
+  [OK ] 同一个模型重复调用计数保持稳定  -> 1
+  Conv3d vs GEMM 最大绝对误差 = 5.722e-06 （真实形状 8624x1536->1152）
+  [OK ] 真实形状下数值等价（误差 < 1e-4）  -> 5.722e-06
+  [OK ] 输出形状一致  -> (8624, 1152)
+  [OK ] 权重未被复制（仍是同一块内存）
+  [OK ] 输入布局不对时报错而不是静默出错
+  [OK ] kernel != stride 的 Conv3d 判为不等价
+  [OK ] 带 padding 的 Conv3d 判为不等价
+  [OK ] groups != 1 的 Conv3d 判为不等价
+  [OK ] kernel==stride、padding=0、groups=1 的 Conv3d 判为等价
+  [OK ] 非 Conv3d 一律不等价
+  [OK ] 结构守卫：名字像 patch_embed 但卷积不够格的模块不会被替换
+  [OK ] 名字守卫：类名不含 patchembed 的模块一律不碰
+
+==========================================================================
+C) GPU 实测：真实形状下 Conv3d bf16 vs GEMM bf16
+==========================================================================
+  conv : 超过 60s 没返回（挂死）
+  gemm :      0.383 ms
+  [OK ] Conv3d bf16 挂死而 GEMM 正常 —— 病态路径复现在 Qwen3.5 上  -> conv=挂死 gemm=0.38ms
+
+==========================================================================
+全部通过

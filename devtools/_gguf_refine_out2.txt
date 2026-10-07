@@ -1,0 +1,95 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[Qwen35] 思考块吃光了预算（1024 tok 全在 reasoning），自动关掉 enable_thinking 重跑一次：CellWorks39.jpg
+临时目录 : C:\Users\ADMIN\AppData\Local\Temp\qwen35_refine_luchn92j
+素材     : CellWorks39.jpg, Qwen_image_2.1_00026.png
+  初稿 CellWorks39.jpg: 1221 字节
+  初稿 Qwen_image_2.1_00026.png: 1593 字节
+
+==========================================================================
+预热（启动 llama-server，不计入判定）
+==========================================================================
+  预热完成 0.0s
+
+==========================================================================
+enable_thinking = False
+==========================================================================
+[Qwen35] ========== 批量打标 ==========
+  文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_refine_luchn92j
+  推理后端    : llama.cpp / GGUF（量化权重，独立进程 llama-server）
+  打标模式    : 优化已有打标（旁边没有 txt 的图跳过）
+  系统提示词  : character（预设：角色/插画（English））
+  描述长度    : 跟随预设原文（desc_length=preset）
+  描述语言    : 英文 → 同名 .txt
+  输出格式    : 英文=raw
+  思考模式    : 关 —— 直接出结果（推荐）
+  一轮自检    : 关 —— 生成即定稿
+  扫描到      : 2 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  待处理      : 2 张 / 2 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  初稿        : 待优化 2 次
+  变更判定    : 拿上次输出的指纹比对，内容没变就不动它；你手动改过的会自动继续优化（想强制重做设 overwrite=overwrite）
+  写回        : 原地覆盖 .txt；原稿按字节备份成 <图名>.txt.orig（只留第一次那份），输出指纹记在同目录 <图名>.txt.q35state
+  输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+
+[Qwen35] ========== 打标汇总 ==========
+  成功 / 失败 : 2 / 0
+  片段合计    : 13 个（平均 6.5 个/次）
+  输出 token  : 240（平均 120.0 tok/次）
+  原稿备份    : 2 个 <图名>.txt.orig（字节级备份，只留第一次那份，可随时还原）
+  输出记录    : 2 个 <图名>.txt.q35state（记的是输出指纹；删掉只会让这张下次重跑一遍，无副作用）
+  打标耗时    :   8.80s（4.40s/次，27.3 tok/s）
+  首张 prefill:   1.29s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  后端        : llama.cpp llama-server（端口 2708）
+  模型        : Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf  +  mmproj-model-bf16.gguf
+  加载后端    :   8.16s
+  --------------------------------
+  合计        :  16.96s
+  例          : CellWorks39.txt -> A female character with a very large head and a small body sits with her legs crossed at the ankles, both hands raised behind her head to frame her face. She ha
+  例          : Qwen_image_2.1_00026.txt -> A young woman with long lavender hair and dark eyes is shown in profile facing left, her mouth open wide around a thick, cylindrical object covered in a brown a
+  ✓ 全部成功
+  >>> 用时 17.0s
+  CellWorks39.jpg -> 714 字: 'A female character with a very large head and a small body sits with her legs crossed at the ankles, both hands raised behind her head to frame her fa'
+  Qwen_image_2.1_00026.png -> 449 字: 'A young woman with long lavender hair and dark eyes is shown in profile facing left, her mouth open wide around a thick, cylindrical object covered in'
+
+==========================================================================
+enable_thinking = True
+==========================================================================
+[Qwen35] ========== 批量打标 ==========
+  文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_refine_luchn92j
+  推理后端    : llama.cpp / GGUF（量化权重，独立进程 llama-server）
+  打标模式    : 优化已有打标（旁边没有 txt 的图跳过）
+  系统提示词  : character（预设：角色/插画（English））
+  描述长度    : 跟随预设原文（desc_length=preset）
+  描述语言    : 英文 → 同名 .txt
+  输出格式    : 英文=raw
+  思考模式    : 开 —— 生成前先推理。**GGUF 后端下很容易把正文挤空**：llama-server 用 --reasoning-format 把 think 分流到独立字段，预算烧完就只剩空串（本机实测同一条 4.4s/次 → 39.9s/次）。打标建议关掉
+  一轮自检    : 关 —— 生成即定稿
+  扫描到      : 2 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  待处理      : 2 张 / 2 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  初稿        : 待优化 2 次
+  变更判定    : 拿上次输出的指纹比对，内容没变就不动它；你手动改过的会自动继续优化（想强制重做设 overwrite=overwrite）
+  写回        : 原地覆盖 .txt；原稿按字节备份成 <图名>.txt.orig（只留第一次那份），输出指纹记在同目录 <图名>.txt.q35state
+  输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+
+[Qwen35] ========== 打标汇总 ==========
+  成功 / 失败 : 2 / 0
+  片段合计    : 12 个（平均 6.0 个/次）
+  输出 token  : 1689（平均 844.5 tok/次）
+  思考兜底    : 1 条的正文被思考块挤空，已自动关掉 enable_thinking 重跑，结果有效（想省掉这次重跑就把思考关掉）
+  原稿备份    : 2 个 <图名>.txt.orig（字节级备份，只留第一次那份，可随时还原）
+  输出记录    : 2 个 <图名>.txt.q35state（记的是输出指纹；删掉只会让这张下次重跑一遍，无副作用）
+  打标耗时    :  43.39s（21.70s/次，38.9 tok/s）
+  首张 prefill:   1.25s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  后端        : llama.cpp llama-server（端口 2708）
+  模型        : Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf  +  mmproj-model-bf16.gguf
+  加载后端    :   0.00s
+  --------------------------------
+  合计        :  43.39s
+  例          : CellWorks39.txt -> A female character with a very large head and a small body sits with her legs crossed at the ankles, both hands raised behind her head to frame her face. She ha
+  例          : Qwen_image_2.1_00026.txt -> A young woman with long lavender hair and pale skin is shown in close-up profile facing left, her dark eye half-lidded and cast downward as she holds a thick cy
+  ✓ 全部成功
+  >>> 用时 43.4s
+  CellWorks39.jpg -> 714 字: 'A female character with a very large head and a small body sits with her legs crossed at the ankles, both hands raised behind her head to frame her fa'
+  Qwen_image_2.1_00026.png -> 456 字: 'A young woman with long lavender hair and pale skin is shown in close-up profile facing left, her dark eye half-lidded and cast downward as she holds '
+
+临时目录保留在 C:\Users\ADMIN\AppData\Local\Temp\qwen35_refine_luchn92j（可自行翻看）

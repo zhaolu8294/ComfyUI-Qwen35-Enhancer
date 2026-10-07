@@ -1,0 +1,111 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_twice_hq9o8rvz
+
+========================================================================================
+STEP 0  基线
+========================================================================================
+  基线                     可用内存  39.70 GiB ( +0.00) | 可用显存  22.54 GiB | RSS   0.51 GiB ( +0.00)
+
+========================================================================================
+STEP 1  HF 9B（transformers，进程内）
+========================================================================================
+  HF 轮-开始前               可用内存  39.58 GiB ( -0.11) | 可用显存  22.54 GiB | RSS   0.63 GiB ( +0.11)
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:01<13:01,  1.03s/it]Loading weights:   0%|          | 2/760 [00:01<09:30,  1.33it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:52, 14.15it/s]Loading weights:   4%|▍         | 29/760 [00:01<00:24, 29.62it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:15, 45.59it/s]Loading weights:   7%|▋         | 54/760 [00:02<00:12, 56.38it/s]Loading weights:   9%|▉         | 68/760 [00:02<00:09, 70.35it/s]Loading weights:  11%|█         | 82/760 [00:02<00:08, 82.39it/s]Loading weights:  13%|█▎        | 96/760 [00:02<00:07, 92.11it/s]Loading weights:  14%|█▍        | 108/760 [00:02<00:06, 93.18it/s]Loading weights:  16%|█▌        | 120/760 [00:02<00:06, 92.26it/s]Loading weights:  18%|█▊        | 135/760 [00:02<00:06, 99.69it/s]Loading weights:  20%|█▉        | 149/760 [00:02<00:05, 105.00it/s]Loading weights:  21%|██        | 161/760 [00:02<00:05, 104.53it/s]Loading weights:  23%|██▎       | 173/760 [00:03<00:05, 107.82it/s]Loading weights:  25%|██▍       | 187/760 [00:03<00:05, 103.11it/s]Loading weights:  26%|██▋       | 201/760 [00:03<00:04, 112.42it/s]Loading weights:  28%|██▊       | 213/760 [00:03<00:05, 103.02it/s]Loading weights:  30%|██▉       | 226/760 [00:03<00:04, 108.16it/s]Loading weights:  31%|███▏      | 239/760 [00:03<00:04, 113.39it/s]Loading weights:  33%|███▎      | 253/760 [00:03<00:04, 113.03it/s]Loading weights:  35%|███▍      | 265/760 [00:04<00:05, 89.94it/s] Loading weights:  37%|███▋      | 279/760 [00:04<00:04, 99.09it/s]Loading weights:  38%|███▊      | 292/760 [00:04<00:04, 105.28it/s]Loading weights:  40%|████      | 304/760 [00:04<00:04, 104.82it/s]Loading weights:  41%|████▏     | 315/760 [00:04<00:05, 84.05it/s] Loading weights:  44%|████▎     | 331/760 [00:04<00:04, 98.58it/s]Loading weights:  45%|████▌     | 344/760 [00:04<00:03, 105.04it/s]Loading weights:  47%|████▋     | 356/760 [00:04<00:03, 102.04it/s]Loading weights:  48%|████▊     | 367/760 [00:05<00:04, 85.46it/s] Loading weights:  51%|█████     | 384/760 [00:05<00:03, 100.70it/s]Loading weights:  52%|█████▏    | 397/760 [00:05<00:03, 105.29it/s]Loading weights:  54%|█████▍    | 409/760 [00:05<00:03, 99.48it/s] Loading weights:  55%|█████▌    | 420/760 [00:05<00:04, 83.09it/s]Loading weights:  64%|██████▎   | 483/760 [00:05<00:01, 204.81it/s]Loading weights:  74%|███████▍  | 565/760 [00:05<00:00, 349.04it/s]Loading weights:  85%|████████▌ | 647/760 [00:05<00:00, 467.54it/s]Loading weights:  98%|█████████▊| 745/760 [00:06<00:00, 602.61it/s]Loading weights: 100%|██████████| 760/760 [00:06<00:00, 125.20it/s]
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+  --- HF 轮完整报告 ---
+  | [Qwen35] ========== 批量打标 ==========
+  |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_twice_hq9o8rvz
+  |   推理后端    : transformers / HF 模型（torch 进程内）
+  |   打标模式    : 优化已有打标（旁边没有 txt 的图跳过）
+  |   系统提示词  : character（预设：角色/插画（English））
+  |   描述长度    : 跟随预设原文（desc_length=preset）
+  |   描述语言    : 英文 → 同名 .txt
+  |   输出格式    : 英文=raw
+  |   思考模式    : 关 —— 直接出结果（推荐）
+  |   一轮自检    : 关 —— 生成即定稿
+  |   扫描到      : 2 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  |   待处理      : 2 张 / 2 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  |   初稿        : 待优化 2 次
+  |   变更判定    : 拿上次输出的指纹比对，内容没变就不动它；你手动改过的会自动继续优化（想强制重做设 overwrite=overwrite）
+  |   写回        : 原地覆盖 .txt；原稿按字节备份成 <图名>.txt.orig（只留第一次那份），输出指纹记在同目录 <图名>.txt.q35state
+  |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+  | 
+  | [Qwen35] ========== 打标汇总 ==========
+  |   成功 / 失败 : 2 / 0
+  |   片段合计    : 17 个（平均 8.5 个/次）
+  |   输出 token  : 291（平均 145.5 tok/次）
+  |   原稿备份    : 2 个 <图名>.txt.orig（字节级备份，只留第一次那份，可随时还原）
+  |   输出记录    : 2 个 <图名>.txt.q35state（记的是输出指纹；删掉只会让这张下次重跑一遍，无副作用）
+  |   打标耗时    :  15.16s（7.58s/次，19.2 tok/s）
+  |   首张 prefill:   1.39s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  |   加载模型    :  18.57s  (本次新加载)
+  |   卸载其他模型:   0.03s
+  |   卸载打标模型:   0.24s
+  |   --------------------------------
+  |   合计        :  34.01s
+  |   例          : CellWorks39.txt -> A single female character with a very large head and a small, slender body sits with her legs crossed at the ankles. She has voluminous white hair with pink hig
+  |   例          : Qwen_image_2.1_00026.txt -> A single character with long, lavender hair leans forward in profile, her dark eyes half-lidded and fixed downward. She wears a simple sleeveless top that expos
+  |   ✓ 全部成功
+  （耗时 34.0s）
+  HF 轮-结束后               可用内存  39.94 GiB ( +0.25) | 可用显存   3.77 GiB | RSS   2.08 GiB ( +1.57)
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\__init__.py:1136: FutureWarning: `torch.distributed.reduce_op` is deprecated, please use `torch.distributed.ReduceOp` instead
+  return isinstance(obj, torch.Tensor)
+  [残留] 活着的 CUDA tensor: 0 个，合计 0.00 GiB
+  HF 轮-显式再释放             可用内存  39.67 GiB ( -0.03) | 可用显存   3.72 GiB | RSS   2.08 GiB ( +1.57)
+  [残留] 活着的 CUDA tensor: 0 个，合计 0.00 GiB
+
+========================================================================================
+STEP 2  GGUF 27B（llama-server 独立进程）
+========================================================================================
+  GGUF 轮-开始前             可用内存  39.67 GiB ( -0.03) | 可用显存   3.78 GiB | RSS   2.08 GiB ( +1.57)
+  --- GGUF 轮完整报告 ---
+  | [Qwen35] ========== 批量打标 ==========
+  |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_twice_hq9o8rvz
+  |   推理后端    : llama.cpp / GGUF（量化权重，独立进程 llama-server）
+  |   打标模式    : 优化已有打标（旁边没有 txt 的图跳过）
+  |   系统提示词  : character（预设：角色/插画（English））
+  |   描述长度    : 跟随预设原文（desc_length=preset）
+  |   描述语言    : 英文 → 同名 .txt
+  |   输出格式    : 英文=raw
+  |   思考模式    : 关 —— 直接出结果（推荐）
+  |   一轮自检    : 关 —— 生成即定稿
+  |   扫描到      : 2 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  |   待处理      : 2 张 / 2 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  |   初稿        : 待优化 2 次
+  |   变更判定    : 拿上次输出的指纹比对，内容没变就不动它；你手动改过的会自动继续优化（想强制重做设 overwrite=overwrite）
+  |   写回        : 原地覆盖 .txt；原稿按字节备份成 <图名>.txt.orig（只留第一次那份），输出指纹记在同目录 <图名>.txt.q35state
+  |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+  | 
+  | [Qwen35] ========== 打标汇总 ==========
+  |   成功 / 失败 : 2 / 0
+  |   片段合计    : 15 个（平均 7.5 个/次）
+  |   输出 token  : 247（平均 123.5 tok/次）
+  |   输出记录    : 2 个 <图名>.txt.q35state（记的是输出指纹；删掉只会让这张下次重跑一遍，无副作用）
+  |   打标耗时    :   8.77s（4.39s/次，28.2 tok/s）
+  |   首张 prefill:   1.32s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  |   后端        : llama.cpp llama-server（端口 7650）
+  |   模型        : Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf  +  mmproj-model-bf16.gguf
+  |   加载后端    :   9.70s
+  |   释放后端    :   1.63s（llama-server 已退出，显存已归还）
+  |   --------------------------------
+  |   合计        :  20.28s
+  |   例          : CellWorks39.txt -> A female character with a very large head and a small, slender body sits cross-legged, her arms raised behind her head to frame her face. She has voluminous whi
+  |   例          : Qwen_image_2.1_00026.txt -> A close-up profile shows a character with long lavender hair and dark eyes leaning forward to take a thick, brown and tan leopard-print phallus into her open mo
+  |   ✓ 全部成功
+  （耗时 20.3s）
+  GGUF 轮-结束后             可用内存  40.04 GiB ( +0.34) | 可用显存  22.44 GiB | RSS   2.08 GiB ( +1.57)
+
+========================================================================================
+STEP 3  静置 30s，看有没有延迟回收
+========================================================================================
+  静置后                    可用内存  39.95 GiB ( +0.25) | 可用显存  22.44 GiB | RSS   2.08 GiB ( +1.57)
+
+========================================================================================
+结论
+========================================================================================
+  · 若「GGUF 轮-结束后」比「基线」低 20 GiB 量级 -> 复现成功，凶手就在换后端这一步
+  · 若基本回到基线 -> 这条链路本身不泄漏；现场那 22.5 GiB 另有来源

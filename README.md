@@ -129,7 +129,7 @@ pip install /path/to/flash_attn-2.8.3+cu130torch2.9-cp313-cp313-win_amd64.whl
 切后端时 `PretrainedConfig` 的 setter 会把值**递归**写到 `vision_config`，
 视觉塔因此自动跟着切，不需要手工传播。
 
-### 解码慢的一半：线性注意力走了 torch 回退（建议装 fla）
+### 线性注意力在走 torch 回退 —— 但**它不是「慢」的原因**（Windows 上别装 fla）
 
 **Qwen3.5 不是普通 Transformer。** 它的 32 层里 **24 层是 Gated DeltaNet
 线性注意力**，只有 8 层是全注意力（`full_attention_interval=4`）。
@@ -141,49 +141,86 @@ self.chunk_gated_delta_rule     = chunk_gated_delta_rule     or torch_chunk_gate
 self.recurrent_gated_delta_rule = fused_recurrent_gated_delta_rule or torch_recurrent_...
 ```
 
-前者来自 `fla`（flash-linear-attention）。**没装 fla 时 decode 会落到 torch 回退**，
-而那份实现是：
+前者来自 `fla`（flash-linear-attention）。本机没装 fla，所以走后者，那份实现是：
 
 ```python
 [x.transpose(1, 2).contiguous().to(torch.float32) for x in (...)]   # fp32
 for i in range(sequence_length): ...                               # 逐 token
 ```
 
-即 **fp32 + 逐个 token + 一串小张量算子**。本机 4090D 实测（同权重同形状，seq=1）：
+即 **fp32 + 逐个 token + 一串小张量算子**，profile 实测每输出 token 要发约
+**3365 个 CUDA kernel**（平均 17 µs）。
 
-| | 单层 | ×24 层 | 占解码 |
-|---|---|---|---|
-| torch 回退 | 1.009 ms | **24.21 ms/token** | **50.6%** |
-| fla 融合内核 | 0.659 ms | 15.81 ms/token | 33.0% |
+**这是 Qwen3.5 在本机 HF 路径上的固有状态，不是故障** —— bf16 下解码的正常水位
+就是 **20~23 tok/s**。所以节点只在解码明显低于 20 tok/s 时才提这件事，
+而且提的是「问题不在这里，去看 CPU」。
 
-单看 gated delta rule 本身（裸算子）是 0.321 ms → 0.056 ms，**5.8×**。
-它的等效带宽只有峰值 1008 GB/s 的 **1.2%** —— 完全是「小算子太多」的延迟问题，
-**不是算力问题、不是带宽问题、更不是图太大**。所以调 `max_image_side`
-或换量化都救不了它。
+#### 为什么别装 fla（两条路都实测过）
 
-装法（**纯 Python wheel，不需要编译**，装完重启 ComfyUI 即生效）：
+| 版本 | 结果 |
+|---|---|
+| `flash-linear-attention` 0.5.2 | transformers 只校验版本号（`>=0.2.2`）**不校验 API**，而 0.3 起 `fla.modules` 已不存在 → 版本判定通过、`import` 抛 `ModuleNotFoundError` → **本模型直接加载失败** |
+| `flash-linear-attention` 0.2.2 + `triton-windows` | 能导入，但运行**卡在首个 kernel 不返回**（fla 官方不支持 Windows） |
 
-```bash
-pip install flash-linear-attention
-```
+而且就算它能跑，收益也不值得冒这个险：隔离环境实测这 24 层
+24.21 → 15.81 ms/token（**省 8.4 ms/token**，约 +2 tok/s）；相比之下下面这条的
+量级是 **2.66 倍**。
 
-约省 1/3 解码时间（整轮 51.85 s → 约 47 s）。数值上与原实现相对误差约
-**6e-03**（bf16 正常量级），24 步连续 decode 无漂移。不想要了
-`pip uninstall flash-linear-attention fla-core` 即可退回。
-
-> 注意 `causal-conv1d`（同一快路径需要的另一个库）**没有 Windows 预编译 wheel**，
+> `causal-conv1d`（同一快路径需要的另一个库）**没有 Windows 预编译 wheel**，
 > 只能从源码编。不装它也没关系：那个 `is_fast_path_available` 标志只控制
 > transformers 自己那条 warning，**不决定用哪份实现** —— 卷积那一小段仍走 torch
 > 回退，代价可忽略（kernel 只有 4）。
 
+#### 真正的解法：把 ComfyUI 钉到 P-core
+
+本机（i7-14700KF，8 P-core + 12 E-core）实测，**同一份代码、同一份权重**：
+
+| 运行方式 | 批量打标解码 |
+|---|---|
+| 不限核（Windows 默认） | **7.1 tok/s** |
+| 只给 P-core（逻辑核 0–15） | **18.8 tok/s** |
+| 只给 E-core（逻辑核 16–27） | **7.4 tok/s** |
+| 进程优先级 HIGH / ABOVE_NORMAL | 7.9 / 8.6 tok/s |
+
+**不限核 ≈ 只给 E-core** ⇒ Windows 默认就把这个线程放在了 E-core 上。
+原因是 HF 的逐 token 解码是「**单核 + 逐个小算子派发**」的负载形态：真机实测
+解码线程吃掉 **85~96%** 的一个核（进程整体 92~98%，另一个线程只占 1~5%），
+而 P-core 单核在这类负载上比 E-core 快 **2.05~4.39 倍**（微基准见
+`devtools/bench_core_type.py`）—— 混合架构上被调度到哪类核，就是 2~3 倍差距。
+
+**提高进程优先级没用**：这不是抢占问题，是「线程被放在哪个核上」的问题。
+
+解法（改的是运行中进程的亲和性掩码，**不需要重启 ComfyUI**）：
+
+```bash
+python devtools/pin_comfyui_pcores.py            # 只诊断，不改任何东西
+python devtools/pin_comfyui_pcores.py --set      # 钉到 P-core
+python devtools/pin_comfyui_pcores.py --watch    # 常驻守护，ComfyUI 一重启就自动钉
+python devtools/pin_comfyui_pcores.py --restore  # 还原
+```
+
+脚本用 `GetLogicalProcessorInformationEx(RelationProcessorCore)` 读
+`EfficiencyClass` **自动识别** P/E 核，不靠「前 16 个就是 P-core」这种硬编码。
+
+端到端效果（批量打标 6 张图、858 输出 token）：
+
+| | 不限核 | 钉 P-core |
+|---|---|---|
+| 解码 | 7.3 tok/s | **18.3 tok/s** |
+| 打标耗时 | 117.68 s | **46.84 s** |
+| 整轮合计 | 135.48 s | **56.87 s** |
+
+> 这也是「同一台机器一会儿快一会儿慢」的答案：**未做任何改动**的同一条 HF
+> 解码路径，日志里既能出现 44.5 ms/token、也能出现 131 ms/token，差别就在
+> 线程被调度到了哪类核。模型加载也同步受影响（钉 P-core 8.06 s vs 不限核 15.40 s）。
+
 节点每次加载模型后会主动报一行，让你不必再靠猜：
 
 ```
-[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑
-         fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这是 Qwen3.5 混合架构在本机
+         HF 路径上的固有状态（逐 token 串行小算子，profile 实测约 3365 个
+         CUDA kernel/token），bf16 下解码正常水位 20~23 tok/s。
 ```
-
-装了 fla 则变成 `24 层全部走融合内核（fla 已生效）`。
 
 ## 准备模型
 
@@ -1219,8 +1256,12 @@ prefill 3000 tok ×2 + decode 543 tok 加权：**4bit 总投影成本约 1.0x bf
 
 - **prefill 慢**（每视觉 token 明显高于 1 ms）→ 视觉塔入口问题，见上面 Conv3d 那节。
   这时才轮到 `max_image_side`。
-- **解码慢** → 先看加载时那行「线性注意力」。若是 Qwen3.5 且报「走 torch 回退」，
-  装 `fla` 能省约 1/3（见上一节）。**这一步和 `max_image_side` 完全无关**。
+- **解码慢** → **先看 CPU，不要先看模型**。节点会在解码明显低于 20 tok/s 时给出
+  归因（按「CPU → 量化档 → 原因未知」的顺序）。**Intel 混合架构（P-core/E-core）
+  的机器先钉 P-core**，本机实测 7.3 → 18.3 tok/s（2.51 倍），见上一节。
+  若是 Qwen3.5 且加载时报了「线性注意力走 torch 回退」，**不要**去装 `fla` ——
+  它在 Windows 上要么让模型加载失败、要么卡死（同上一节）。
+  **这一步和 `max_image_side` 完全无关**。
 
 降低 `max_new_tokens`（H3 三段式通常 300~600 token）也直接按比例减少解码时间。
 

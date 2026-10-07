@@ -1,0 +1,4 @@
+﻿TotalMB=65292
+FreeMB=42739
+--- llama/python 进程 ---
+PID=9628 python.exe WS=425MB

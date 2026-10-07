@@ -32,7 +32,15 @@ NODE_DIR = os.path.join(
 DST = os.path.join(NODE_DIR, "devtools")
 
 EXCLUDE_DIRS = {"__pycache__"}
-EXCLUDE_FILES = {"returns"}
+# `_fla_probe*` 是探 fla 各版本兼容性时把 wheel 解包到工作区的目录，
+# 里面是**第三方包本体**（fla 0.5.2 / 0.2.2 / 0.3.2 / 0.4.2 四份 site-packages，
+# 合计约 7MB、700+ 文件），不是我们写的脚本，不该进仓库。
+# 按前缀排除（那些目录名带版本号后缀，逐个列举容易漏）。
+EXCLUDE_DIR_PREFIXES = ("_fla_probe",)
+# _pyspy_native.json 是 py-spy --native 的原始采样 dump，一份 3.2MB。
+# 结论不对（采样偏线程）但它仍是「为什么读错了」的证据，重跑命令就在报告里，
+# 没必要把 3MB 原始样本塞进仓库；同名的 _pyspy_dump1.txt（几 KB 的汇总）照常同步。
+EXCLUDE_FILES = {"returns", "_pyspy_native.json"}
 EXCLUDE_SUFFIXES = (".pyc", ".bak_attention")
 
 # 需要改写 WF 定义的文件（**白名单**，不要放宽）。
@@ -64,7 +72,9 @@ def collect():
     """返回 [(相对路径, 绝对源路径)]，按相对路径排序保证可复现。"""
     out = []
     for dirpath, dirnames, filenames in os.walk(SRC):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        dirnames[:] = [d for d in dirnames
+                       if d not in EXCLUDE_DIRS
+                       and not d.startswith(EXCLUDE_DIR_PREFIXES)]
         for fn in filenames:
             if not wanted(fn):
                 continue

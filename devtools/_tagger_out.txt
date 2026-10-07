@@ -1,0 +1,706 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+==========================================================================
+A) 纯函数：扩展名 / 路径 / 扫描 / txt 同名 / 标签清洗
+==========================================================================
+  [OK ] 扩展名解析：大小写、逗号/分号/空格分隔、补点  -> ['.jpeg', '.jpg', '.png', '.webp']
+  [OK ] 扩展名解析：空串退回默认
+  [OK ] 扩展名解析：全是垃圾字符也退回默认
+  [OK ] 扩展名解析：不会把 '..' 当成扩展名
+  [OK ] 空 folder_path 明确报错（不静默跳过整个任务）  -> folder_path 是空的。请填图片所在文件夹的路径，例如 E:\datas
+  [OK ] 不存在的目录明确报错  -> \qwen35_tagger_9og7d6d4\不存在的目录
+  [OK ] 路径带引号也能解析（从资源管理器复制常见）
+  [OK ] input/ 前缀解析到 ComfyUI 的 input 目录
+  [OK ] output/ 前缀解析到 ComfyUI 的 output 目录
+  [OK ] txt 与图片同目录同名  -> E:\data\a b.txt
+  [OK ] 后缀插在扩展名前
+  [OK ] 大写扩展名也认得
+  原始: '```\n1girl, solo,\n long_hair , 1girl, - blue_eyes, `badge`\n```'
+  清洗: '1girl, solo, long_hair, blue_eyes, badge'
+  [OK ] 清洗：围栏与换行被去掉、压成一行
+  [OK ] 清洗：反引号被去掉
+  [OK ] 清洗：项目符号被去掉
+  [OK ] 清洗：重复标签去重且保序  -> 1girl, solo, long_hair, blue_eyes, badge
+  [OK ] 清洗：主体数目标签 2girls 不会被当成序号吃掉  -> 2girls, 1boy
+  [OK ] 清洗：序号 '1. xxx' 会被去掉  -> solo, outdoors
+  [OK ] 清洗：两侧引号被去掉  -> solo, long_hair
+  [OK ] 清洗：空输出仍然是空
+  [OK ] 标签计数：按逗号
+  [OK ] 标签计数：换行也算分隔
+  [OK ] 标签计数：空文本为 0
+
+==========================================================================
+B) 读图：RGB 统一 / 灰度 / alpha / 长边限幅
+==========================================================================
+  [OK ] RGB 图原样读出
+  [OK ] 灰度图被转成 RGB（否则喂模型会出错）
+  [OK ] 带 alpha 的 PNG 被转成 RGB
+  [OK ] CMYK JPEG 被转成 RGB
+  [OK ] 长边超限时等比缩小到 64  -> (64, 32)
+  [OK ] 缩图保持宽高比（200x100 -> 64x32）  -> (64, 32)
+  [OK ] max_image_side=0 时不缩图  -> (200, 100)
+  [OK ] EXIF 竖拍图被转正（80x40 -> 40x80）  -> (40, 80)
+
+==========================================================================
+C) 写盘：原子替换 / 编码 / 不留临时文件
+==========================================================================
+  [OK ] 写入成功且内容一致
+  [OK ] 写入后不残留 .qwen35tmp
+  [OK ] 重复写入会原子覆盖
+  [OK ] gbk 编码可写
+  [OK ] gbk 写入后也不残留临时文件
+
+==========================================================================
+D) 扫描与跳过逻辑
+==========================================================================
+  非递归扫描: ['a.JPG', 'b.png', 'c.webp', 'd.jpeg']
+  [OK ] 非递归：只扫当前目录 4 张  -> 4
+  [OK ] 非递归：不含子目录里的 e.png
+  [OK ] 非递归：扩展名大小写都认（a.JPG 在内）
+  [OK ] 非递归：非图片扩展名被排除
+  [OK ] 非递归：同名目录 fake.png 不被当成文件
+  [OK ] 顺序按名字小写排序（可复现）  -> ['a.JPG', 'b.png', 'c.webp', 'd.jpeg']
+  递归扫描: ['a.JPG', 'b.png', 'c.webp', 'd.jpeg', 'sub/e.png']
+  [OK ] 递归：含子目录（5 张）  -> 5
+  [OK ] 递归：子目录文件带相对路径  -> ['a.JPG', 'b.png', 'c.webp', 'd.jpeg', 'sub/e.png']
+  [OK ] 两次扫描结果完全一致（顺序可复现）
+
+==========================================================================
+E) 节点接线：widgets / 签名 / 注册 / 共享缓存
+==========================================================================
+  widgets 顺序:
+    [ 0] model_name
+    [ 1] folder_path
+    [ 2] system_preset
+    [ 3] system_prompt
+    [ 4] user_prompt
+    [ 5] quantization
+    [ 6] attention
+    [ 7] enable_thinking
+    [ 8] recursive
+    [ 9] overwrite
+    [10] image_exts
+    [11] output_suffix
+    [12] output_encoding
+    [13] output_format
+    [14] max_new_tokens
+    [15] temperature
+    [16] seed
+    [17] max_image_side
+    [18] limit
+    [19] dry_run
+    [20] keep_model_loaded
+    [21] unload_other_models
+    [22] custom_model_path
+    [23] show_progress
+    [24] progress_interval
+    [25] bilingual
+    [26] max_output_chars
+    [27] caption_mode
+    [28] desc_length
+    [29] desc_words
+    [30] bilingual_sync
+    [31] verify
+  连线输入（不占 widget 位）: ['backend']
+  [OK ] widgets 总数 = 32（backend 是连线输入，不计数）  -> 32
+  [OK ] 连线输入只有 backend  -> ['backend']
+  [OK ] backend 是可选输入，类型 QWEN35_BACKEND  -> ('QWEN35_BACKEND',)
+  [OK ] backend 不是必填（不连线时必须能照常跑原路径）
+  [OK ] 签名与 widgets 顺序一致
+  [OK ] 新增控件**一律追加在末尾**（否则旧工作流 widgets_values 会整体串位）  -> ['max_output_chars', 'caption_mode', 'desc_length', 'desc_words', 'bilingual_sync', 'verify']
+  [OK ] folder_path 不是多行框（路径不该用多行输入）
+  [OK ] system_preset 排在 system_prompt 之前（先选预设再编辑）
+  [OK ] system_preset 默认 custom（不改变旧工作流行为）  -> custom
+  [OK ] system_preset 选项：custom 排第一，且 3 主题 × 中英共 6 套齐全  -> ['custom', 'photoreal', 'photoreal_zh', 'character', 'character_zh', 'scene', 'scene_zh']
+  [OK ] bilingual 取值与扩写节点一致（off / en_then_zh）  -> ['off', 'en_then_zh']
+  [OK ] bilingual 默认 off（默认不加倍耗时）
+  [OK ] max_output_chars 默认 0 = 不限（行为与以前一致）  -> 0
+  [OK ] caption_mode 三档齐全（off / refine / refine_or_new）  -> ['off', 'refine', 'refine_or_new']
+  [OK ] caption_mode 默认 off（默认不改写任何已有 txt）  -> off
+  [OK ] system_prompt 是多行框
+  [OK ] system_prompt 默认是打标提示词而不是 H3 那套
+  [OK ] 运行期默认值与 INPUT_TYPES 一致
+  [OK ] overwrite 默认 skip（绝不覆盖已有标签）
+  [OK ] output_format 默认 tags_one_line
+  [OK ] temperature 默认 0.2（比扩写节点更稳）
+  [OK ] max_new_tokens 默认 256（标签很短）
+  [OK ] quantization 默认 none
+  [OK ] RETURN 形如 (report, tagged)  -> ('STRING', 'INT') ('report', 'tagged')
+  [OK ] FUNCTION / CATEGORY / OUTPUT_NODE
+  [OK ] 已注册进 NODE_CLASS_MAPPINGS
+  [OK ] 有显示名
+  [OK ] 旧节点仍注册（没有把扩写节点挤掉）
+  [OK ] 打标节点继承扩写节点
+  [OK ] 两者共用同一份常驻模型缓存（不会各加载一份 17.5GiB）
+  [OK ] 速度优化链路被继承：_free_vram / _load / _release 都在
+  [OK ] 模块 docstring 提到了新节点
+
+==========================================================================
+G) 进度单位：批量按「张」，扩写仍是「tok」
+==========================================================================
+  [OK ] 批量进度行用「张」  -> 生成 ███████░░░░░░░░░░░░░░░  30.0%  3/10 张    --  张/s  (0.4s/张)
+  [OK ] 批量进度行的速度单位也是「张/s」
+  [OK ] 默认（不传 unit）仍是 tok —— 扩写路径不受影响
+  [OK ] reporter=None 也能造出 criteria（批量要的是「只查中断」）
+  [OK ] criteria 自己记录了 prefill 时刻（日志要能拆 prefill/解码）
+
+==========================================================================
+F) 批量行为（假模型 + 真写盘）
+==========================================================================
+  --- dry_run 报告 ---
+   | [Qwen35] ========== 批量打标 ==========
+   |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\d1
+   |   推理后端    : transformers / HF 模型（torch 进程内）
+   |   打标模式    : 从零打标
+   |   系统提示词  : custom（custom，取节点上填写的文本）
+   |   描述长度    : 跟随预设原文（desc_length=preset）
+   |   描述语言    : 预设 → 同名 .txt
+   |   输出格式    : 预设=tags_one_line
+   |   思考模式    : 关 —— 直接出结果（推荐）
+   |   一轮自检    : 关 —— 生成即定稿
+   |   扫描到      : 3 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+   |   待处理      : 3 张 / 3 次生成（整张无需处理跳过 0 张，overwrite=skip）
+   |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+   |   ⓘ dry_run=true：只列清单，不加载模型、不写任何文件
+   |      im01.png  ->  im01.txt   [预设]
+   |      im02.png  ->  im02.txt   [预设]
+   |      im03.png  ->  im03.txt   [预设]
+  [OK ] dry_run：没有加载模型  -> 0
+  [OK ] dry_run：一张 txt 都没写
+  [OK ] dry_run：返回计数 0
+  [OK ] dry_run：报告里列出待处理文件与目标 txt
+  [OK ] dry_run：报告说明不会写文件
+  [OK ] dry_run：走 ui 通道把报告回显到节点上
+  [OK ] 没有图片时：不加载模型  -> 0
+  [OK ] 没有图片时：报告写明并给出扫描数  ->   推理后端    : transformers / HF 模型（torch 进程内）
+  [OK ] 没有图片时：计数 0
+  --- 正常批量报告 ---
+   | [Qwen35] ========== 批量打标 ==========
+   |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\d3
+   |   推理后端    : transformers / HF 模型（torch 进程内）
+   |   打标模式    : 从零打标
+   |   系统提示词  : custom（custom，取节点上填写的文本）
+   |   描述长度    : 跟随预设原文（desc_length=preset）
+   |   描述语言    : 预设 → 同名 .txt
+   |   输出格式    : 预设=tags_one_line
+   |   思考模式    : 关 —— 直接出结果（推荐）
+   |   一轮自检    : 关 —— 生成即定稿
+   |   扫描到      : 4 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+   |   待处理      : 4 张 / 4 次生成（整张无需处理跳过 0 张，overwrite=skip）
+   |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+   | 
+   | [Qwen35] ========== 打标汇总 ==========
+   |   成功 / 失败 : 4 / 0
+   |   标签合计    : 16 个（平均 4.0 个/次）
+   |   输出 token  : 16（平均 4.0 tok/次）
+   |   打标耗时    :   0.01s（0.00s/次，2028.3 tok/s）
+   |   首张 prefill:   0.00s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+   |   加载模型    :   0.00s  (本次新加载)
+   |   卸载其他模型:   0.00s
+   |   卸载打标模型:   0.04s
+   |   --------------------------------
+   |   合计        :   0.18s
+   |   例          : im01.txt -> 1girl, solo, long_hair, blue_eyes
+   |   例          : im02.txt -> 1girl, solo, long_hair, blue_eyes
+   |   例          : im03.txt -> 1girl, solo, long_hair, blue_eyes
+   |   ✓ 全部成功
+  [OK ] 加载模型恰好一次（整个文件夹共用）  -> 1
+  [OK ] 4 张全部成功  -> 4
+  [OK ] 为每张图都写了 txt
+  第 1 张 txt 内容: '1girl, solo, long_hair, blue_eyes'
+  [OK ] txt 内容是一行清洗后的标签  -> 1girl, solo, long_hair, blue_eyes
+  [OK ] txt 就近写在图片所在目录（不新建标签文件夹）
+  [OK ] 报告含 成功 / 失败 计数
+  [OK ] 报告含平均标签数与 token 数
+  [OK ] 报告含首张 prefill（含 CUDA 预热说明）
+  [OK ] 报告含每张的单行日志（✓）
+  [OK ] 每张日志带标签数/token/耗时
+  [OK ] 报告打了全部成功
+  [OK ] 默认 keep_model_loaded=False 会释放模型  -> 1
+  [OK ] 系统提示词确实传给了 chat template
+  [OK ] 用户提示词也跟着传了
+  [OK ] 图片在消息里排在文字之前
+  [OK ] generate 收到了中断用 criteria
+  [OK ] temperature>0 时走采样
+  [OK ] max_new_tokens 传对了
+  [OK ] 已有非空 txt 被跳过且内容原样保留
+  [OK ] 零字节 txt 被重新打标（上次写失败的残留）
+  [OK ] 只处理了 2 张（跳过 1 张）  -> 2
+  [OK ] 报告里写明跳过了几张
+  [OK ] 跳过判定发生在加载模型之前也能体现（报告先打印）
+  [OK ] 整批都已打好标签时不再加载模型  -> 0
+  [OK ] 并明确提示没有需要处理的图片
+  [OK ] overwrite=overwrite 时覆盖已有 txt
+  [OK ] overwrite=overwrite 时 3 张全处理  -> 3
+  [OK ] 第 2 张失败后仍继续处理第 3 张  -> 2
+  [OK ] 报告写明 2 成功 / 1 失败
+  [OK ] 失败清单里带文件名与原因  -> ['  ⚠ 失败清单（1 张；原图与已有 txt 均未被改动）:', '     - im02.png：ValueError: 假失败：这一张读不出来']
+  [OK ] 失败的图不写 txt（不留下空文件）
+  [OK ] 失败的前后两张都正常写了 txt
+  [OK ] 日志用 ✗ 标出失败那张
+  [OK ] 空输出被判为失败  -> 1
+  [OK ] 空输出不写 txt（否则下游会当成已打好标）
+  [OK ] 失败原因说明是空输出
+  [OK ] 取消会抛出（不会把整批跑完）  -> InterruptProcessingException
+  [OK ] 取消时模型被释放（keep_model_loaded=False）  -> 1
+  [OK ] 取消日志说明处理到第几张  -> 4 标签 / 4 tok / 33 字符 / 0.0s（prefill 0.00s、解码 0.0s = 90703.0 tok/s）
+[Qwen35] 已取消：处理到第 2/4 张（前面已写好的 txt 保留，未完成的那次不会留下半个文件）
+  [OK ] 第 1 张已写好的 txt 被保留
+  [OK ] 被打断那张没留下 txt
+  [OK ] 被打断那张没留下 .qwen35tmp
+  [OK ] 后面没跑到的两张也没写
+  [OK ] _is_comfy_interrupt 认得真实的中断异常
+  [OK ] _is_comfy_interrupt 靠类名兜底（桩环境下也认得）
+  [OK ] _is_comfy_interrupt 不会把普通异常误判
+  [OK ] _is_comfy_interrupt 不会把 KeyboardInterrupt 误判
+  [OK ] raw 模式保留换行与自然语言（不压成逗号）  -> 'A woman sitting by the window.\nShe holds a cup.'
+  [OK ] output_suffix 生效（im01_tags.txt）
+  [OK ] 有后缀时不写无后缀的 txt
+  [OK ] 递归模式会处理子目录图片  -> 4
+  [OK ] 子目录里也写了同名 txt
+  [OK ] limit 只处理前 N 张  -> 2
+  [OK ] limit 提示出现在报告里
+  [OK ] temperature=0 走贪心解码  -> False
+  [OK ] output_encoding=gbk 时文件真是 gbk 编码
+  [OK ] 日志里报告了编码
+  [OK ] 图被删掉时算单张失败（同批另一张照常完成）  -> 1
+
+==========================================================================
+H) 系统提示词预设：JSON 加载 / 选择逻辑 / 容错 / 热重载
+==========================================================================
+  [OK ] 预设 JSON 落在本节点目录下（presets/ 子目录）  -> E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\presets\tagging_system_prompts.json
+  [OK ] 预设 JSON 已经生成出来（前面 INPUT_TYPES 触发过）  -> E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\presets\tagging_system_prompts.json
+  [OK ] 默认带 6 套预设（3 主题 × 中英）  -> ['photoreal', 'photoreal_zh', 'character', 'character_zh', 'scene', 'scene_zh']
+  [OK ] 每套都有 label / prompt / lang / group / format
+  [OK ] 每套 format 都是 raw（自然语言描述不该被逗号规整破坏）  -> {'photoreal': 'raw', 'photoreal_zh': 'raw', 'character': 'raw', 'character_zh': 'raw', 'scene': 'raw', 'scene_zh': 'raw'}
+  [OK ] photoreal 明令禁止风格 / 媒介 / 技法 / 画质词
+  [OK ] photoreal 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）
+  [OK ] photoreal 明确要求写自然语言句子、不许写标签串
+  [OK ] photoreal 写明 NSFW 不回避、如实描述
+  [OK ] photoreal 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）
+  [OK ] photoreal 带 refine_prompt（优化已有打标的校订指令）  -> 1291
+  [OK ] photoreal 保留「只写看得见的、不编造」硬规则
+  [OK ] photoreal 指定了输出语言
+  [OK ] photoreal_zh 明令禁止风格 / 媒介 / 技法 / 画质词
+  [OK ] photoreal_zh 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）
+  [OK ] photoreal_zh 明确要求写自然语言句子、不许写标签串
+  [OK ] photoreal_zh 写明 NSFW 不回避、如实描述
+  [OK ] photoreal_zh 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）
+  [OK ] photoreal_zh 带 refine_prompt（优化已有打标的校订指令）  -> 404
+  [OK ] photoreal_zh 保留「只写看得见的、不编造」硬规则
+  [OK ] photoreal_zh 指定了输出语言
+  [OK ] character 明令禁止风格 / 媒介 / 技法 / 画质词
+  [OK ] character 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）
+  [OK ] character 明确要求写自然语言句子、不许写标签串
+  [OK ] character 写明 NSFW 不回避、如实描述
+  [OK ] character 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）
+  [OK ] character 带 refine_prompt（优化已有打标的校订指令）  -> 1291
+  [OK ] character 保留「只写看得见的、不编造」硬规则
+  [OK ] character 指定了输出语言
+  [OK ] character_zh 明令禁止风格 / 媒介 / 技法 / 画质词
+  [OK ] character_zh 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）
+  [OK ] character_zh 明确要求写自然语言句子、不许写标签串
+  [OK ] character_zh 写明 NSFW 不回避、如实描述
+  [OK ] character_zh 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）
+  [OK ] character_zh 带 refine_prompt（优化已有打标的校订指令）  -> 404
+  [OK ] character_zh 保留「只写看得见的、不编造」硬规则
+  [OK ] character_zh 指定了输出语言
+  [OK ] scene 明令禁止风格 / 媒介 / 技法 / 画质词
+  [OK ] scene 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）
+  [OK ] scene 明确要求写自然语言句子、不许写标签串
+  [OK ] scene 写明 NSFW 不回避、如实描述
+  [OK ] scene 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）
+  [OK ] scene 带 refine_prompt（优化已有打标的校订指令）  -> 1291
+  [OK ] scene 保留「只写看得见的、不编造」硬规则
+  [OK ] scene 指定了输出语言
+  [OK ] scene_zh 明令禁止风格 / 媒介 / 技法 / 画质词
+  [OK ] scene_zh 禁词表确实展开了（没有残留 <<STYLE_BAN>> 占位符）
+  [OK ] scene_zh 明确要求写自然语言句子、不许写标签串
+  [OK ] scene_zh 写明 NSFW 不回避、如实描述
+  [OK ] scene_zh 写明敏感内容要「直接、具体」地写（不委婉、不替代、不绕着说）
+  [OK ] scene_zh 带 refine_prompt（优化已有打标的校订指令）  -> 404
+  [OK ] scene_zh 保留「只写看得见的、不编造」硬规则
+  [OK ] scene_zh 指定了输出语言
+  [OK ] 六套互不相同（不是同一份文本换名）
+  [OK ] 同主题的中英两份共用 group（双语配对全靠它）
+  [OK ] 中英两份的 lang 标对了
+  [OK ] 旧标签体系的脚手架已完全移除（不再列举 1girl / Tag order 那套）
+  [OK ] 选预设时忽略 system_prompt（防止被忘改的旧 widget 值顶掉）
+  [OK ] 返回的记录带 label（报告里要显示选了哪套）  -> 写实照片（English）
+  [OK ] 返回的记录带 lang / group / format（双语编排与格式联动要用）
+  [OK ] custom 用 widget 里填的文本
+  [OK ] custom 的 format 是 None（含义：格式交给 output_format 控件）  -> None
+  [OK ] 认不出的预设名回退 custom（预设被删/改名时老工作流不至于拿不到提示词）
+  [OK ] 预设名大小写不敏感（手改 JSON 常见）
+  [OK ] 空 preset 视为 custom
+  [OK ] None preset 也视为 custom
+  [OK ] custom 是保留名，JSON 里写它会被忽略（否则下拉语义会乱）  -> ['a', 'b']
+  [OK ] 简写形式（key 直接给字符串）也认
+  [OK ] 新字段缺省时有兜底：lang=en / group=key / format=raw  -> {'label': 'a', 'prompt': 'AAA', 'lang': 'en', 'group': 'a', 'format': 'raw', 'refine_prompt': '', 'sync_prompt': ''}
+  [OK ] lang 只认 en/zh，乱填回退 en
+  [OK ] format 只认 raw/tags_one_line，乱填回退 raw
+  [OK ] group 显式给了就用给的（中英配对靠它）
+  [OK ] 空 prompt 的条目被跳过（不然下拉里会多个空选项）
+  [OK ] 缺 presets 对象明确报错
+  [OK ] 全空 preset 明确报错（好让上层回退内置）
+  [OK ] JSON 坏掉：回退内置六套而不是抛异常  -> ['photoreal', 'photoreal_zh', 'character', 'character_zh', 'scene', 'scene_zh']
+  [OK ] JSON 坏掉：日志里明确报了解析失败  -> ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\presets\tagging_system_prompts.json
+  [OK ] JSON 坏掉：坏内容没被缓存住（下次还会重试读盘）
+  [OK ] 改了 JSON 文本后无需重启即生效（按 mtime 热重载）  -> HOT-RELOAD-OK
+  [OK ] 恢复原文件后重新读回内置文本
+  [OK ] 报告里显示所选预设名  -> ['  系统提示词  : scene（预设：场景/环境（English））']
+  [OK ] custom 时报告写明取节点上填写的文本
+
+==========================================================================
+I) 双语同时输出 / 输出字符上限 / 格式联动
+==========================================================================
+  [OK ] _lang_word 认 en / zh / 空 / 其他
+  [OK ] 上限 0 = 不限
+  [OK ] 没超限就原样返回
+  [OK ] 超限时退到句末标点，且**保留**句号  -> '一位穿红外套的女性站在窗边。'
+  [OK ] 截断结果一定不超上限  -> 14
+  [OK ] 退不到句末时退到分句，并丢掉悬空的逗号  -> '短发，戴帽子，穿风衣'
+  [OK ] 两头都退不到就硬切（不返回空）  -> 'abcdefghij'
+  [OK ] 标签串模式按逗号退（不会切在半个标签里）  -> '1girl, solo, long_hair'
+  [OK ] 英文句点也算句末（英文描述的主要落点）
+  [OK ] 单语：只跑一份，后缀空、lang=en
+  [OK ] 单语：不产生任何说明（不该有噪声）  -> None
+  [OK ] 双语：跑中英两份，顺序固定 en -> zh  -> ['en', 'zh']
+  [OK ] 双语：英文不带后缀，中文带 _zh  -> ['', '_zh']
+  [OK ] 双语：两份分别是该主题的英文版与中文版提示词
+  [OK ] 双语能正常配对时不产生说明  -> None
+  [OK ] 选中文预设 + 双语：结果与选英文预设一样（主题由 group 决定）
+  [OK ] custom + 双语：退化为单份，并明确说明原因（不能默默只写一份）  -> bilingual=en_then_zh，但 custom 预设只有你手写的那一份提示词，推不出另一种语言 → 本次按单语处理
+  [OK ] 找不到同 group 的中文对照：退化为单份并说明缺哪种语言  -> bilingual=en_then_zh，但主题「no_such_group」缺少英文、中文对照预设 → 本次按单语处理。补一套同 group 的预设即可（在 JSON 里给对手那份设同样的 group）
+  [OK ] 双语：返回的是写出的文件数（2 张 × 2 语言 = 4）  -> 4
+  [OK ] 双语：模型被调用 4 次（每张两次）  -> 4
+  [OK ] 双语：英文写 im01.txt、中文写 im01_zh.txt  -> en=True zh=True
+  [OK ] 双语：两份内容确实是各自语言的输出  -> '中文描述内容。'
+  [OK ] 双语：报告里写明两种语言与后缀
+  [OK ] 双语：报告里有「生成次数」一行
+  [OK ] 字符上限：写出的 txt 不超上限  -> 14 字符
+  [OK ] 字符上限：退到句末标点并保留句号  -> '一位穿红外套的女性站在窗边。'
+  [OK ] 字符上限：报告里出现「按上限截断」
+  [OK ] 字符上限：汇总里报告了截断条数
+  [OK ] 上限 0：完整写入，不做任何截断  -> 37 字符
+  [OK ] 选了预设：按预设声明的 raw 原样写（换行保留，不被逗号规整）
+  [OK ] custom：output_format 控件仍然生效（默认 tags_one_line 把换行拍平成逗号）  -> 'first part, second part'
+  [OK ] 双语 + skip：英文已有的那张只补中文（2×2 - 1 = 3 次生成）  -> 3
+  [OK ] 双语 + skip：已有的英文 txt 未被覆盖
+  [OK ] 双语 + skip：对应中文那份补上了
+  [OK ] 双语 + skip：另一张两种语言都写了
+  [OK ] 双语 + skip：返回文件数 3（补 1 中文 + 新 2 张 ×2）  -> 3
+  [OK ] dry_run 双语：清单里同时列出 .txt 与 _zh.txt
+  [OK ] dry_run 双语：清单里标了语言
+  [OK ] dry_run：不加载模型  -> 0
+  [OK ] custom + dry_run：报告里说明双语开关为何无效
+
+==========================================================================
+J) 优化已有打标（caption_mode = refine / refine_or_new）
+==========================================================================
+  [OK ] 读初稿：utf-8 正常读出并 strip  -> '一段 utf-8 中文'
+  [OK ] 读初稿：gbk 旧稿也能读（编码自动回退）  -> 'GBK 写的旧稿'
+  [OK ] 读初稿：带 BOM 的 utf-8 不残留 \ufeff  -> '带 BOM 的稿子'
+  [OK ] 读初稿：文件不存在 -> 空串
+  [OK ] 读初稿：只有空白 -> 空串（当作没有初稿）
+  [OK ] 读初稿：超长按 _TAG_DRAFT_LIMIT 截断（不把上下文挤爆）  -> 4000
+  [OK ] 内容指纹：首尾空白被规范化（与读回的 strip 对齐）
+  [OK ] 内容指纹：内容不同 -> 指纹不同
+  [OK ] 内容指纹：写出去与读回来算出来一致（refine 幂等的前提）
+  [OK ] 校订指令：预设自带的 refine_prompt 优先（不回落常量）
+  [OK ] 校订指令：英文预设缺 refine_prompt 时回落英文常量
+  [OK ] 校订指令：中文预设缺 refine_prompt 时回落中文常量
+  [OK ] 校订指令：custom（无 lang）回落「与原稿同语言」那份
+  [OK ] 校订指令：三份都要求「只输出最终描述、不要解释改了什么」
+  [OK ] 校订指令：三份都写了「不要顺手消毒」（改写时不许把 NSFW 洗掉）
+  [OK ] 拼装：指令在前、初稿在后
+  [OK ] 拼装：英文 run 用英文标签
+  [OK ] 拼装：中文 run 用中文标签
+  [OK ] 拼装：custom（lang 空）用兜底标签
+  [OK ] 拼装：初稿为空也返回字符串、不抛异常
+  [OK ] _tag_runs：单语 run 也带校订指令
+  [OK ] _tag_runs：双语时两份各带自己语言的校订指令
+  [OK ] 配置指纹：同一份配置两次算出来一样
+  [OK ] 配置指纹：换预设 -> 变
+  [OK ] 配置指纹：改字符上限 -> 变
+  [OK ] 配置指纹：换系统提示词 -> 变
+  [OK ] refine：处理了 1 张  -> 1
+  [OK ] refine：初稿被塞进 user 文本  -> ['Here is an EXISTING caption for the image above. It was written earlier, possibly by a weaker mode
+  [OK ] refine：校订指令和初稿在同一段 user 文本里
+  [OK ] refine：系统提示词仍是预设那份（没被校订指令顶掉）
+  [OK ] refine：结果写回同一个 txt
+  [OK ] refine：原稿按字节备份成 .orig
+  [OK ] refine：写下输出指纹记录 .q35state
+  [OK ] refine：报告写明模式与变更判定
+  [OK ] 内容未变：直接跳过，不加载模型、不覆盖  -> 0
+  [OK ] 内容未变：报告写明「内容未变跳过」
+  [OK ] 内容未变：txt 保持上次的输出
+  [OK ] 手改后继续优化：被认出来并重跑  -> 1
+  [OK ] 手改后继续优化：初稿用的就是我手改的那一版
+  [OK ] 手改后继续优化：输出已更新
+  [OK ] 手改后继续优化：.orig 仍是最初那一稿（不被手改版覆盖）
+  [OK ] 手改后继续优化：指纹记录跟着更新
+  [OK ] 换了预设：内容没变也重做（配置指纹变了）  -> 1
+  [OK ] 同预设再跑一次：又跳过了（说明上一步真的记了新指纹）  -> 0
+  [OK ] overwrite=overwrite：内容没变也强制重做  -> 1
+  [OK ] 强制重做也不会覆盖 .orig（最初那一稿永远留着）
+  [OK ] caption_mode=refine：没有旧 txt 的图一律跳过（只处理 1 张）  -> 1
+  [OK ] caption_mode=refine：没旧稿的不会被写出 txt
+  [OK ] caption_mode=refine：没旧稿的也不会留下 .orig
+  [OK ] caption_mode=refine_or_new：无初稿的从零补写（2 张）  -> 2
+  [OK ] refine_or_new：补写的两张写出了 txt
+  [OK ] refine_or_new：从零补写的不留 .orig（本来就没有原稿可备份）
+  [OK ] refine_or_new：补写的也记了指纹（下次不会重做）
+  [OK ] refine_or_new：报告区分「待优化」与「无初稿从零写」
+  [OK ] refine_or_new 幂等：第二次一张都不动（含刚才从零补写的）  -> 0
+  [OK ] 写盘失败：原 txt 未被改动
+  [OK ] 写盘失败：刚建的 .orig 被撤回（不留误导性痕迹）
+  [OK ] 写盘失败：不留下输出记录（否则下次会被当成「没变」跳过）
+  [OK ] 写盘失败：算这一张失败并写进报告
+  [OK ] dry_run(refine)：清单标出「校订原有」与「从零补写」
+  [OK ] dry_run(refine)：不加载模型、不写文件
+  [OK ] dry_run(refine)：报告写明模式
+  [OK ] 双语 refine：英文那份读的是 .txt  -> ['Here is an EXISTING caption for the image above. It was written earlier, possibly by a weaker model, and it may be inc
+  [OK ] 双语 refine：中文那份读的是 _zh.txt（各读各的）  -> ['Here is an EXISTING caption for the image above. It was written earlier, possibly by a weaker model, and it may be inc
+  [OK ] 双语 refine：两个文件都写回  -> 2
+  [OK ] 双语 refine：两个 .orig 都建了
+  [OK ] 双语 refine：两份各自记了指纹
+  [OK ] caption_mode=off（默认）：有 txt 的图照旧跳过  -> 0
+  [OK ] caption_mode=off：不建 .orig / .q35state
+  [OK ] caption_mode=off：报告也写明「从零打标」
+
+==========================================================================
+K  GGUF 后端（llama.cpp / llama-server）
+==========================================================================
+  [OK ] K1a 最小配置也能拼出可用的命令行  -> C:\x\llama-server.exe -m m.gguf --host 127.0.0.1 --port
+  [OK ] K1b n_gpu_layers=-1 时不传 -ngl（层放置交给 llama.cpp 自动 fit）
+  [OK ] K1c 带 mmproj 时传 --mmproj
+  [OK ] K1d 只有显式给了 n_gpu_layers>=0 才传 -ngl
+  [OK ] K1e --flash-attn 用 on/off 取值（新版 llama.cpp 不认裸开关）
+  [OK ] K1f --jinja 必开（否则 GGUF 里的 Qwen 模板与图片占位符都对不上）
+  [OK ] K1g parallel 钉死 1（48 层线性注意力的 recurrent state 按槽位算）
+  [OK ] K1h KV cache 走 q8_0；填 f16 时反而不传该参数
+  [OK ] K1i flash_attn=False 时不传 --flash-attn
+  [OK ] K1j reasoning_format=none 时不传 --reasoning-format
+  [OK ] K1k 上下文长度通过 -c 传下去
+  [OK ] K1l extra_args 原样追加到命令行尾
+  [OK ] K2a 同一份配置 -> 同一签名
+  [OK ] K2b 换上下文 -> 签名变化（会触发重建）
+  [OK ] K2c 换模型路径 -> 签名变化
+  [OK ] K2d 换 mmproj -> 签名变化
+  [OK ] K2e batch / ubatch 这类吃显存的参数也在签名里
+  [OK ] K3a mmproj 识别：含 mmproj / clip 开头 / 含 vision
+  [OK ] K3b 主干模型不会被误判成 mmproj
+  [OK ] K3c path_from_label 把「（无 / 纯文本）」翻成空串
+  [OK ] K3d path_from_label 给的是文件路径时原样返回
+  [OK ] K4a 同签名第二次 acquire 复用同一实例
+  [OK ] K4b 换了上下文后 acquire 给的是新实例
+  [OK ] K4c 被顶掉的旧实例已标记关闭
+  [OK ] K4d release 之后 current_server() 为空
+  [OK ] K5a /health 返回 ok 时 ensure_ready 直接返回
+  [OK ] K5b 进程提前退出 -> 立刻报错而不是干等到超时  -> llama-server 启动后退出（退出码 1）。最近输出：
+  [OK ] K5c 一直 503（权重还在传）时最终按超时报警  -> 等待 llama-server 就绪超时（1s）。最近输出：
+  [OK ] K6a content 与 reasoning_content 分开取回  -> 'TAGGED-OUT' / 'hidden-thought'
+  [OK ] K6b 从 timings 拆出 prefill / 解码两段时间  -> 0.3 / 0.2
+  [OK ] K6c usage 的 token 数被带出来
+  [OK ] K6d 系统提示词与用户提示词各成一条 message  -> ['system', 'user']
+  [OK ] K6e 默认关思考：chat_template_kwargs.enable_thinking=False
+  [OK ] K6f 纯文本时 content 是字符串而不是数组
+  [OK ] K6g max_tokens / temperature 按请求传下去
+  [OK ] K7a 带图时 content 变成数组（text + image_url）  -> ['text', 'image_url']
+  [OK ] K7b 图片走 base64 data URI  -> data:image/png;base64,iVBORw0KGgoAAAANSU
+  [OK ] K7c base64 能解回真实图片字节
+  [OK ] K7d enable_thinking=True 时不注入 chat_template_kwargs
+  [OK ] K7e mime 按扩展名推断
+  [OK ] K7f 包成列表 [ (mime, bytes) ] 也照样工作（上面测的是裸元组）
+  [OK ] K8a 找不到 llama-server.exe -> 报错带文件名与下载指引  -> 找不到 llama-server.exe：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\nope.exe
+  [OK ] K8b 找不到 gguf -> 报错里带该路径  -> 找不到 GGUF 模型：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\nope.gguf
+  [OK ] K8c mmproj 路径写错时单独报错（不会退化成一堆难懂的 llama.cpp 报错）  -> 找不到 mmproj：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\nope_mm.gguf
+  [OK ] K9a 无 mmproj：按「权重×1.10 + 1.2GiB」估  -> 1204
+  [OK ] K9b 有 mmproj：把它的体积也算进去  -> 1208
+  [OK ] K9c backend 不是 GGUF 节点输出时退回保守默认值，不抛异常
+  [OK ] K10a max_side=0 时原样返回字节
+  [OK ] K10b 给了 max_side 后重新编码、体积明显变小  -> 1067 -> 127
+  [OK ] K10c 缩放保持长边不超过 max_side 且比例不变  -> (400, 300) -> (64, 48)
+  [OK ] K11a 「GGUF 后端」节点已注册，输出类型为 QWEN35_BACKEND  -> <class 'nodes.Qwen35GGUFServer'>
+  [OK ] K11b 三个必选控件 model / mmproj / server_exe 都在  -> ['model', 'mmproj', 'server_exe']
+  [OK ] K11c 两个主节点都接受 backend 连线输入
+  [OK ] K11d parallel 默认 1（不是 llama-server 的 4）  -> 1
+  [OK ] K11e n_gpu_layers 默认 -1（交给 llama.cpp 自动 fit）  -> -1
+  [OK ] K11f KV cache 默认 q8_0
+  [OK ] K12a 打标节点：GGUF 分支里先调了 _free_vram
+  [OK ] K12b 扩写节点：GGUF 分支里先调了 _free_vram
+  [OK ] K12c 腾显存时用的是 gguf 实际大小，而不是 HF 的 quant 档位
+  [OK ] K13a 从地址里取文件名：query 与 URL 编码都能剥掉
+  [OK ] K13b remote_size 走 HEAD 拿到总长度  -> 300000
+  [OK ] K13c 完整下载：内容一致、.part 不留  -> downloaded
+  [OK ] K13d 目标已完整存在 -> 判定 already，只探一次大小、不重下  -> already / hits=[('HEAD', 'mmproj-model-bf16.gguf')]
+  [OK ] K13e 断点续传：拿 .part 的大小发 Range 请求，接着下完  -> downloaded / 半截 100000 -> 300000
+  [OK ] K13f 续传出来的内容和整段下的一模一样
+  [OK ] K13g 下完大小对不上 -> 报错，并保留 .part 供下次续传  -> 下载不完整：拿到 300,000 字节，应该是 304,096 字节（差 4,096）。
+  [OK ] K13h 本地已有同名文件 -> 直接用，一个网络请求都不发（离线可用）  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\searchdir\mmproj-model-bf16.gguf
+  [OK ] K13i 空地址 -> ensure_file 返回空串（「不下」是这个函数的合法入参）
+  [OK ] K13j 空地址直接调 download_file -> 明确报错  -> 下载地址是空的
+  [OK ] K14a provide()：mmproj 缺失时自动下到主干模型同一目录  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\searchdir2\mmproj-model-bf16.gguf
+  [OK ] K14b 下完后 report 里不再报「没选 mmproj」
+  [OK ] K14c 下完后 label 里带上了 mmproj 文件名  -> main.gguf  +  mmproj-model-bf16.gguf
+  [OK ] K14d auto_download=False 时绝不下载，仍然报警
+  [OK ] K14e 后端节点默认 mmproj_url 已指向 Qwen3.8 的视觉投影（开箱即用）  -> https://hf-mirror.com/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF/resolve/main/mmproj-model-bf16.gguf?download=true
+  [OK ] K14f auto_download 默认开、model_url 默认空（16GB 不该自动下）
+
+==========================================================================
+L) 描述长度档位（改的是提示词里那句长度条款，不是 max_new_tokens）
+==========================================================================
+  [OK ] L1a 档位选项：preset 排第一，四档 + custom 齐全  -> ['preset', 'short', 'medium', 'long', 'extra_long', 'custom']
+  [OK ] L1b 每个档位的句数/字数区间都合法（正数、下限 < 上限）  -> {'short': (1, 2, 15, 40), 'medium': (2, 4, 50, 100), 'long': (4, 8, 120, 250), 'extra_long': (8, 15, 250, 450)}
+  [OK ] L1c 档位按长度严格递增（short < medium < long < extra_long）  -> [40, 100, 250, 450]
+  [OK ] L2a preset / 空 / 未知值 -> 一律不动原文（不猜、不报错）
+  [OK ] L2b 四个内置档位解析成表里的数字，大小写不敏感
+  [OK ] L2c custom 认 60~150 / 60-150 / 60 到 150 / 60,150 四种写法  -> [(60, 150), (60, 150), (60, 150)]
+  [OK ] L2d custom 上下限写反了会自动摆正  -> (60, 150)
+  [OK ] L2e custom 解析不出来 -> 退回 preset（宁可不改，也不乱改）
+  [OK ] L2e2 单个数也认 -> 按 ±30% 摊成区间（用户常直接填「300」表示大约 300 词）  -> [(210, 390), (56, 104), (210, 390)]
+  [OK ] L2f 字数 30~80 反推出的句数正好是 1~3（与预设原文一致，换算没跑偏）  -> (1, 3, 30, 80)
+  [OK ] L2g 反推的句数上限永远至少比下限大 1（不能出现 1~1 句这种区间）
+  [OK ] L3a 六套预设都带 prompt（L 段要在真文本上验，而不是我编的样本）  -> ['character', 'character_zh', 'photoreal', 'photoreal_zh', 'scene', 'scene_zh']
+  [OK ] L3b desc_length=preset 时六套预设全文逐字节不变（旧行为零改动）
+  [OK ] L3c 英文预设被改写成 4~8 sentences / 120~250 words
+  [OK ] L3d 英文改写**只动了数字**，连接词与标点逐字节不变
+  [OK ] L3e 中文预设被改写成 4~8 句 / 120~250 字（单位仍是「字」，没有串成 words）
+  [OK ] L3f 中文改写**只动了数字**，标点与措辞逐字节不变
+  [OK ] L3g refine 指令里那句长度条款也一起改掉（否则长描述会被校订阶段压回短的）  -> ['- Make it read as 8~15 plain sentences, about 250~450 words, one paragraph.']
+  [OK ] L3h 六套预设的 refine_prompt 全都能命中改写（没有哪套漏改）
+  [OK ] L4a 找不到长度条款 -> 末尾追加覆盖指令（静默失效是最糟的结果）
+  [OK ] L4b 追加时按语种换措辞（中文提示词不会突然冒出一句英文指令）
+  [OK ] L4c 「10~30 tags」不会被误当成「句数~字数」条款改掉（只认 sentences/句 + words/字）
+  [OK ] L4d 空文本 / 空档位 -> 原样返回，标成 keep
+  [OK ] L5a token 估算随字数单调递增
+  [OK ] L5b 同一字数目标下英文要的 token 比中文多（1 word ≈ 1.6 tok vs 1 字 ≈ 1.15）
+  [OK ] L5c long 档要的 token 已经超过默认 256 —— 不抬就会被硬截断（这就是联动的原因）  -> 464
+  [OK ] L6a desc_length 默认 preset（不选就不改变任何旧行为）  -> preset
+  [OK ] L6b desc_words 默认空串
+  [OK ] L6c desc_length 的选项与代码里的档位表一致（不会出现选了没反应的档）
+  [OK ] L7a 换档位确实改到了提示词文本（否则 L7b 测不出东西）
+  [OK ] L7b 换了长度档位 -> 配置指纹跟着变（refine 模式不会因为「txt 没变」跳过长档重做）
+  [OK ] L7c 没换档位时指纹稳定（同一份配置两次算出来必须一样，否则每次都会重跑）
+  [OK ] L8a 长度档位在算 cfg 指纹**之前**生效（顺序反了 = 换档位不会触发重做）
+  [OK ] L8b 生成调用统一用抬升后的 max_new_tokens_eff（原始值只在估算处出现一次）  -> raw=1 eff=12
+  [OK ] L8c 报告头会写明当前长度档位（否则用户看不出档位到底生效没）
+  [OK ] L8d 长度档位与字符上限冲突时会提醒（long 档 + max_output_chars=80 是自相矛盾）
+
+==========================================================================
+M) 双语互同步（改中文 -> 自动回灌英文；反向也认）
+==========================================================================
+  [OK ] M1a 同步指令：预设自带 sync_prompt 最优先
+  [OK ] M1b 目标是英文 -> 回落英文常量，且写明「这是翻译，不是改编」
+  [OK ] M1c 目标是中文 -> 回落中文常量
+  [OK ] M1d 两份都把「一一对应」与「不许顺手纠正」写死（不丢改动的关键就在这两句）
+  [OK ] M1e 与校订指令同口径：翻译这道工序也不许把 NSFW 洗掉
+  [OK ] M2a 同步的 user 文本：指令在前、源内容在后
+  [OK ] M2b 标签与校订**不同**（排查时一眼能看出这份是翻过来的）
+  [OK ] M2c 中文目标用中文标签
+  [OK ] M2d 校订路径没被这次改动影响（同一套拼装，标签各用各的）
+  [OK ] M3a 双语两份各带**自己目标语言**的同步指令
+  [OK ] M3b 单语 run 也带同步指令（字段齐全，取的时候不会 KeyError）
+  [OK ] M4a 两份都与记录一致 -> 一个 job 都不发（不白跑一遍模型）  -> [] / (0, 0, 2, 0, 0)
+  [OK ] M4b 只改了中文 -> 中文照常校订 + 英文以中文为源同步  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
+  [OK ] M4c **源排在目标前面**（目标要翻的是源校订之后的版本）  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
+  [OK ] M4d 同步 job 记着源文件路径（执行时现读，不缓存旧内容）  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\m_b\im01_zh.txt
+  [OK ] M4e 过时的那份不当初稿，只留着备份用
+  [OK ] M4f 统计：校订 1 次、同步 1 次、无跳过  -> (1, 0, 0, 1, 0)
+  [OK ] M4g 只改了英文 -> 英文校订 + 中文以英文为源同步（双向，不是只往下灌）  -> [('en', '（校订原有）'), ('zh', '（同步英文）')]
+  [OK ] M4h auto + 两份都被改过 -> 各改各的，谁也不覆盖谁（两边都有你的手笔）  -> [('en', '（校订原有）'), ('zh', '（校订原有）')]
+  [OK ] M4i 统计里双边手改记 1 张（报告要据此提醒）  -> (2, 0, 0, 0, 1)
+  [OK ] M4j zh_to_en + 两份都被改过 -> 以中文为准，英文那份被同步覆盖  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
+  [OK ] M4k zh_to_en 但中文没被改过 -> 退回常规判定，不会每次把英文重刷一遍  -> [] / (0, 0, 2, 0, 0)
+  [OK ] M4l sync=off -> 只改中文（英文按常规判定跳过，旧行为一字未改）  -> [('zh', '（校订原有）')] / (1, 0, 1, 0, 0)
+  [OK ] M4m 英文那份压根不存在时也同步（新建，不是从零瞎写）  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
+  [OK ] M4n 不存在的那份没有初稿 -> draft 为空（不产生 .orig 备份）
+  [OK ] M4o refine_or_new：有源可依就同步，不会退化成从零瞎写  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
+  [OK ] M4p 单语（只跑一份）时同步逻辑整个不参与（中文那份被改了也不管）  -> [('en', '（校订原有）')] / (1, 0, 0, 0, 0)
+  [OK ] M4q 从零打标：已有非空 txt 一律跳过，同步参数完全不参与  -> [] / (0, 0, 0, 0, 0)
+  [OK ] M4r overwrite=overwrite + 谁都没改 -> 各自重做，不做跨语言改写  -> [('en', '（校订原有）'), ('zh', '（校订原有）')]
+  [OK ] M4s 两份都没有输出记录（首次优化）-> 各改各的，且不误报「双边手改」  -> [('en', '（校订原有）'), ('zh', '（校订原有）')] / (2, 0, 0, 0, 0)
+  [OK ] M4t 没有记录不等于「不用处理」（常规判定照旧会处理它）  -> 2
+  [OK ] M5a 首次优化：中英两份各校订一次  -> 2
+  [OK ] M5b 英文写回校订结果
+  [OK ] M5c 中文写回校订结果
+  [OK ] M5d 手改中文后：只跑 2 次（中文校订 + 英文同步），英文没被当自己人重校一遍  -> 4
+  [OK ] M5e 中文那份的 user 文本里带的是你改过的稿子（先校订）  -> '最终描述。不要解释你改了什么，不要罗列修改点，也不要使用标签、项目符号、编号或字段名。\n\n现有描述：\nZH-EDITED'
+  [OK ] M5f **英文那份收到的是中文校订后的内容**（源排前面，执行时现读磁盘）  -> 'e, no explanation, no quotes.\n\nCAPTION TO TRANSLATE (another language):\nZH-FIXED'
+  [OK ] M5g 英文那份用的是同步指令，不是校订指令
+  [OK ] M5h 英文写回的是同步结果
+  [OK ] M5i 中文写回的是它自己的校订结果
+  [OK ] M5j 英文的输出记录里记下了源指纹（诊断用）  -> 335fa23a02f9
+  [OK ] M5k 被覆盖的英文原稿还在 .orig 里（只留第一次那份）
+  [OK ] M5l 报告写明同步次数与档位
+  [OK ] M5m 幂等：再跑一次零生成（不会每次都把中文重翻一遍）  -> 4 -> 4
+  [OK ] M5n 幂等：报告说明两份内容都没变
+  [OK ] M6a 手改英文 -> 中文以英文为源同步（方向可逆）  -> 'ZH-FROM-EN'
+  [OK ] M6b 中文那份用的是中文同步指令
+  [OK ] M6c sync=off：只跑了改过的那一份（1 次生成）  -> 1
+  [OK ] M6d sync=off：中文那份原样不动（旧行为）
+  [OK ] M6e sync=off：报告里如实写 off
+  [OK ] M7a bilingual_sync 选项与代码里的档位表一致  -> ['auto', 'zh_to_en', 'off']
+  [OK ] M7b bilingual_sync 默认 auto（你不用改任何东西就能得到「改中文自动回灌英文」）  -> auto
+  [OK ] M7c 报告对三种档位都有话可说（不会打出一个看不懂的值）
+  [OK ] M7d 同步判定用「源优先」排序（源必须排在目标前面执行）
+  [OK ] M7e 执行时现读源文件，不缓存规划阶段的旧内容
+  [OK ] M7f 源读不出来时明确报错而不是把空内容翻过去
+
+==========================================================================
+N) 一轮带图自检（verify）+ 输入保真度
+==========================================================================
+  [OK ] N1a 要求逐条列出可核查的断言，并逐条判定（泛泛问「写得对不对」会被自洽偏差带跑）
+  [OK ] N1b 每条都要写「图里实际是什么」（逼它重新看图，而不是复述自己的文字）
+  [OK ] N1c 只改判错的部分、明确禁止顺手润色与重写
+  [OK ] N1d 输出里带可解析的 CORRECTED 段
+  [OK ] N2a 只有 off / once 两档（刻意不做多轮迭代：第二轮会来回震荡）  -> ('off', 'once')
+  [OK ] N2b 长度守卫区间 = [0.4, 2.5]（实测正常修正的变化在 ±30% 以内）  -> 0.4, 2.5
+  [OK ] N3a user 侧文本 = 一行标签 + 去掉首尾空白的待核查描述  -> 'CAPTION TO CHECK:\na cat'
+  [OK ] N3b 标签用英文（与英文自检指令同语种，否则模型会中途换语言写）  -> CAPTION TO CHECK:
+  [OK ] N4a 正常输出：取 CORRECTED 段作为最终文本  -> fixed / 'A woman with silver hair and green eyes sits by a window. Her hands rest on the sill.'
+  [OK ] N4b 没有 CORRECTED 标记 -> no_mark，原稿原样返回  -> no_mark / 'A woman with silver hair and green eyes sits by a window.'
+  [OK ] N4c CORRECTED 段是空的 -> empty，原稿原样返回  -> empty / 'A woman with silver hair and green eyes sits by a window.'
+  [OK ] N4d 修正稿短得离谱 -> bad_len 并回退（疑似把 CHECKS 段当正文）  -> bad_len / 'A woman with silver hair and green eyes sits by a window.'
+  [OK ] N4e 修正稿长得离谱 -> bad_len 并回退（疑似干脆重写了一篇）  -> bad_len / 'A woman with silver hair and green eyes sits by a window.'
+  [OK ] N4f 修正稿与原稿逐字一致 -> same（本来就没查出错），结果仍是原稿  -> same / 'A woman with silver hair and green eyes sits by a window.'
+  [OK ] N4g 原稿本身是空的 -> skipped，不会把修正稿写进一个本该空着的位置  -> skipped / ''
+  [OK ] N4h 只认独占行首的 CORRECTED:，正文里顺嘴提到它不算标记  -> fixed / 'A woman with silver hair and green eyes sits by a window. Her hands rest on the sill.'
+  [OK ] N4i 修正段被 markdown 围栏包住也能剥干净  -> fixed / 'A woman with silver hair and green eyes sits by a window. Her hands rest on the sill.'
+  [OK ] N4j 长度接近上限但仍在内 -> 放行（守卫不能紧到误杀正常修正）  -> fixed ratio=2.19
+  [OK ] N5a verify=once：一张图跑两次推理（正文 + 自检）  -> 2
+  [OK ] N5b 写盘的是自检修正后的文本，不是第一次的正文  -> 1girl, solo, long_hair, green_eyes, closed_mouth
+  [OK ] N5c 报告里有自检配置行与统计行  -> ['  一轮自检    : 开 —— 生成后再带图核验一轮，只改判错的部分（每张多一次推理）', '  一轮自检    : 跑了 1 次，1 条被修正']
+  [OK ] N6a 自检没按格式来 -> 保留原正文（这一步只可能改对或不动）  -> 1girl, solo, long_hair, blue_eyes
+  [OK ] N6b 报告把这种情况统计成「未生效」  -> ['  一轮自检    : 开 —— 生成后再带图核验一轮，只改判错的部分（每张多一次推理）', '  一轮自检    : 跑了 1 次，0 条被修正，1 次未生效（已保留原稿）']
+  [OK ] N7a verify=off（默认）：一张图只跑一次推理（旧行为一字未改）  -> 1
+  [OK ] N7b 报告写明自检是关的  -> ['  一轮自检    : 关 —— 生成即定稿']
+  [OK ] N8a 缩图后输出 PNG —— 无损编码是免费的（视觉 token 只由尺寸决定）  -> image/png
+  [OK ] N8b 缩放本身仍生效（体积比原图小）  -> 1067 -> 449
+  [OK ] N8c lossless=False 仍可退回到 JPEG（留给需要极小请求体的场合）  -> image/jpeg
+  [OK ] N9a verify 默认 off（不改变旧工作流行为）  -> off
+  [OK ] N9b verify 只有 off / once 两档  -> ['off', 'once']
+  [OK ] N9c max_image_side 默认抬到 1536（保真度：1280 会把细节压掉）  -> 1536
+  [OK ] N9d 两个节点的签名默认值也跟着抬（直接调函数时行为一致）  -> 1536
+
+==========================================================================
+O) GGUF 思考兜底（正文被 think 挤空时自动关掉思考重跑）
+==========================================================================
+  [OK ] O1a 正文被思考挤空 -> 自动重跑，且第二次明确关掉思考  -> [True, False]
+  [OK ] O1b 交出去的是重跑那次的正文，不是空串  -> '1girl, silver_hair'
+  [OK ] O1c token 记账把两次都算上（报的是真实消耗）  -> 630
+  [OK ] O1d 实例上留下标记，供汇总行计数
+  [OK ] O2 正文与思考块都空（真 EOS）-> 不重跑，也不假装成功  -> calls=1 text=''
+  [OK ] O3 没开思考 -> 不触发重跑（旧路径行为零改变）  -> calls=1
+  [OK ] O4 正文非空 -> 不重跑（思考块长不等于出错）  -> calls=1 text='1girl'
+  [OK ] O5a 报告头写明思考模式开关状态
+  [OK ] O5b 报告里有「思考兜底」统计行（跑了几条被救回来）
+  [OK ] O5c 「输出为空」的提示会指向 enable_thinking（否则用户猜不到该关哪个开关）
+
+  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4
+  已清理临时目录
+
+==========================================================================
+全部通过

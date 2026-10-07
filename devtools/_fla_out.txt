@@ -1,0 +1,140 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[Qwen35] ⚠ 以 flash_attention_2 初始化失败（ModuleNotFoundError: Could not import module 'Qwen3_5ForConditionalGeneration'. Are this object's requirements defined correctly?），本次退回 sdpa。视觉塔会走逐图切块路径，图片 prefill 会明显变慢。
+Traceback (most recent call last):
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2249, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2483, in _get_module
+    raise e
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2481, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\qwen3_5\modeling_qwen3_5.py", line 72, in <module>
+    from fla.modules import FusedRMSNormGated
+ModuleNotFoundError: No module named 'fla.modules'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\nodes.py", line 1648, in _load
+    model = _from_pretrained(attn_impl)
+  File "E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\nodes.py", line 1641, in _from_pretrained
+    return AutoModelForImageTextToText.from_pretrained(path, **kw)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 358, in from_pretrained
+    explicit_local_code = has_local_code and not _get_model_class(
+                                                 ~~~~~~~~~~~~~~~~^
+        config, cls._model_mapping
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ).__module__.startswith("transformers.")
+    ^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 180, in _get_model_class
+    supported_models = model_mapping[type(config)]
+                       ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 605, in __getitem__
+    return self._load_attr_from_module(model_type, model_name)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 619, in _load_attr_from_module
+    return getattribute_from_module(self._modules[module_name], attr)
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 531, in getattribute_from_module
+    if hasattr(module, attr):
+       ~~~~~~~^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2337, in __getattr__
+    raise ModuleNotFoundError(
+        f"Could not import module '{name}'. Are this object's requirements defined correctly?"
+    ) from e
+ModuleNotFoundError: Could not import module 'Qwen3_5ForConditionalGeneration'. Are this object's requirements defined correctly?
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2249, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2483, in _get_module
+    raise e
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2481, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\qwen3_5\modeling_qwen3_5.py", line 72, in <module>
+    from fla.modules import FusedRMSNormGated
+ModuleNotFoundError: No module named 'fla.modules'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\ADMIN\WorkBuddy\2026-10-06-18-56-50\h3_workflow\diagnose_fla.py", line 130, in main
+    r = node.tag_folder(
+        model_name=HF_MODEL, folder_path=tmp,
+    ...<8 lines>...
+        desc_length="extra_long", verify="off", backend=None,
+    )
+  File "E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\nodes.py", line 4702, in tag_folder
+    model, processor, freshly_loaded = self._load(path, quantization, attention)
+                                       ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\nodes.py", line 1660, in _load
+    model = _from_pretrained("sdpa")
+  File "E:\AI\ComfyUI-aki-v3\ComfyUI\custom_nodes\ComfyUI-Qwen35-Enhancer\nodes.py", line 1641, in _from_pretrained
+    return AutoModelForImageTextToText.from_pretrained(path, **kw)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 358, in from_pretrained
+    explicit_local_code = has_local_code and not _get_model_class(
+                                                 ~~~~~~~~~~~~~~~~^
+        config, cls._model_mapping
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ).__module__.startswith("transformers.")
+    ^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 180, in _get_model_class
+    supported_models = model_mapping[type(config)]
+                       ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 605, in __getitem__
+    return self._load_attr_from_module(model_type, model_name)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 619, in _load_attr_from_module
+    return getattribute_from_module(self._modules[module_name], attr)
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\models\auto\auto_factory.py", line 531, in getattribute_from_module
+    if hasattr(module, attr):
+       ~~~~~~~^^^^^^^^^^^^^^
+  File "E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\transformers\utils\import_utils.py", line 2337, in __getattr__
+    raise ModuleNotFoundError(
+        f"Could not import module '{name}'. Are this object's requirements defined correctly?"
+    ) from e
+ModuleNotFoundError: Could not import module 'Qwen3_5ForConditionalGeneration'. Are this object's requirements defined correctly?
+
+====================================================================================
+STEP 0  fla 可导入性
+====================================================================================
+  隔离目录: C:\Users\ADMIN\WorkBuddy\2026-10-06-18-56-50\h3_workflow\_fla_probe
+  目录存在: True
+  ✓ import fla 成功  版本 ?
+  triton 3.7.0 (triton-windows)
+
+====================================================================================
+STEP 1  transformers 是否认到 fast path
+====================================================================================
+  检查失败: ModuleNotFoundError: Could not import module 'modeling_qwen3_5'. Are this object's requirements defined correctly?
+
+====================================================================================
+STEP 2  加载 HF 9B 并打标（同 diagnose_ab_backend 的配置）
+====================================================================================
+  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_fla_xpk5r7yo
+  !! 异常 ModuleNotFoundError: Could not import module 'Qwen3_5ForConditionalGeneration'. Are this object's requirements defined correctly?
+
+  -> fla 装上了但跑不通（用时 0.4s），结论：换 GGUF 后端。

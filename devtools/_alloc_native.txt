@@ -1,0 +1,23 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+====================================================================================
+步速对照：分配器
+====================================================================================
+  PYTORCH_CUDA_ALLOC_CONF = （默认 native）
+  torch 实际分配器后端      = native
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:00<10:35,  1.19it/s]Loading weights:   0%|          | 2/760 [00:01<08:30,  1.48it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:48, 15.48it/s]Loading weights:   4%|▍         | 29/760 [00:01<00:23, 31.73it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:14, 48.14it/s]Loading weights:   7%|▋         | 53/760 [00:01<00:12, 56.55it/s]Loading weights:   9%|▉         | 68/760 [00:01<00:09, 72.80it/s]Loading weights:  11%|█         | 82/760 [00:02<00:08, 84.11it/s]Loading weights:  13%|█▎        | 96/760 [00:02<00:07, 92.19it/s]Loading weights:  14%|█▍        | 108/760 [00:02<00:06, 94.76it/s]Loading weights:  16%|█▌        | 121/760 [00:02<00:06, 96.69it/s]Loading weights:  18%|█▊        | 135/760 [00:02<00:06, 101.96it/s]Loading weights:  20%|█▉        | 149/760 [00:02<00:05, 105.73it/s]Loading weights:  21%|██        | 161/760 [00:02<00:05, 105.79it/s]Loading weights:  23%|██▎       | 174/760 [00:02<00:05, 106.97it/s]Loading weights:  25%|██▍       | 188/760 [00:03<00:05, 109.99it/s]Loading weights:  27%|██▋       | 202/760 [00:03<00:05, 109.50it/s]Loading weights:  28%|██▊       | 214/760 [00:03<00:05, 106.07it/s]Loading weights:  30%|██▉       | 227/760 [00:03<00:05, 105.91it/s]Loading weights:  32%|███▏      | 241/760 [00:03<00:04, 107.00it/s]Loading weights:  33%|███▎      | 254/760 [00:03<00:04, 103.71it/s]Loading weights:  35%|███▍      | 265/760 [00:03<00:04, 100.23it/s]Loading weights:  37%|███▋      | 279/760 [00:03<00:04, 109.56it/s]Loading weights:  38%|███▊      | 292/760 [00:04<00:04, 114.67it/s]Loading weights:  40%|████      | 306/760 [00:04<00:03, 114.20it/s]Loading weights:  42%|████▏     | 318/760 [00:04<00:04, 101.31it/s]Loading weights:  44%|████▎     | 332/760 [00:04<00:04, 106.76it/s]Loading weights:  46%|████▌     | 346/760 [00:04<00:03, 109.16it/s]Loading weights:  47%|████▋     | 359/760 [00:04<00:03, 112.75it/s]Loading weights:  49%|████▉     | 371/760 [00:04<00:03, 98.33it/s] Loading weights:  51%|█████     | 385/760 [00:04<00:03, 96.86it/s]Loading weights:  53%|█████▎    | 400/760 [00:05<00:03, 104.23it/s]Loading weights:  54%|█████▍    | 414/760 [00:05<00:03, 107.49it/s]Loading weights:  56%|█████▌    | 425/760 [00:05<00:03, 103.06it/s]Loading weights:  71%|███████▏  | 543/760 [00:05<00:00, 376.03it/s]Loading weights:  86%|████████▋ | 657/760 [00:05<00:00, 578.22it/s]Loading weights:  99%|█████████▉| 755/760 [00:05<00:00, 681.24it/s]Loading weights: 100%|██████████| 760/760 [00:05<00:00, 135.47it/s]
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+
+  --- 报告关键行 ---
+  | 成功 / 失败 : 2 / 0
+  | 输出 token  : 532（平均 266.0 tok/次）
+  | 打标耗时    :  25.93s（12.97s/次，20.5 tok/s）
+  | 加载模型    :  13.71s  (本次新加载)
+  | 合计        :  40.08s
+
+  墙钟总耗时 40.1s
+
+  基线参考（默认 native，3 张图）: 21.6 tok/s  [diagnose_ab_backend.py]

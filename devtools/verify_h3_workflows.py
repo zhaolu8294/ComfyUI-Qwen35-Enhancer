@@ -27,6 +27,97 @@ IDX = {
 problems = []
 notes = []
 
+# --------------------------------------------------------------- 节点控件数
+# nodes 里的 widgets_values 长度 = required + optional，但两类键不占位置：
+#   ① 连线输入：类型是 "QWEN35_BACKEND" 这种自定义字符串（节点上是插槽，不是控件）
+#   ② 图片输入：image / image_2..image_4（同样是插槽）
+# 这两个数字以前是写死的（Qwen=18 / BatchTagger=28），节点加控件后就静默过期 ——
+# BatchTagger 已经从 28 长到 32，就是被这个陈旧常量卡住的。
+# 所以改成从 nodes.py 的 INPUT_TYPES 现算；环境跑不起来时只提示，不算错误。
+_NODE_META = None
+
+
+def node_widget_counts():
+    global _NODE_META
+    if _NODE_META is not None:
+        return _NODE_META
+    _NODE_META = {}
+    NODE_DIR = os.path.join(CV, "custom_nodes", "ComfyUI-Qwen35-Enhancer")
+    NODES_PY = os.path.join(NODE_DIR, "nodes.py")
+    if not os.path.isfile(NODES_PY):
+        return _NODE_META
+    try:
+        import importlib.util
+        import sys as _sys
+        import types as _types
+
+        fp = _types.ModuleType("folder_paths")
+        fp.models_dir = os.path.join(CV, "models")
+        fp.get_filename_list = lambda *a, **k: []
+        fp.get_input_directory = lambda: ""
+        fp.get_output_directory = lambda: ""
+        _sys.modules.setdefault("folder_paths", fp)
+
+        comfy = _types.ModuleType("comfy")
+        cu = _types.ModuleType("comfy.utils")
+
+        class _PB:
+            def __init__(self, *a, **k):
+                pass
+
+            def update(self, *a, **k):
+                pass
+
+        cu.ProgressBar = _PB
+        comfy.utils = cu
+        _sys.modules.setdefault("comfy", comfy)
+        _sys.modules.setdefault("comfy.utils", cu)
+
+        class InterruptProcessingException(BaseException):
+            pass
+
+        mm = _types.ModuleType("comfy.model_management")
+        mm.InterruptProcessingException = InterruptProcessingException
+        mm.unload_all_models = lambda *a, **k: None
+        mm.soft_empty_cache = lambda *a, **k: None
+        mm.throw_exception_if_processing_interrupted = lambda *a, **k: None
+        comfy.model_management = mm
+        _sys.modules.setdefault("comfy.model_management", mm)
+
+        spec = importlib.util.spec_from_file_location("_h3_nodes_meta", NODES_PY)
+        mod = importlib.util.module_from_spec(spec)
+        _sys.modules["_h3_nodes_meta"] = mod
+        spec.loader.exec_module(mod)
+
+        for cname in ("Qwen35PromptEnhancer", "Qwen35BatchImageTagger"):
+            cls = getattr(mod, cname, None)
+            if cls is None:
+                continue
+            it = cls.INPUT_TYPES()
+            req = list(it.get("required", {}))
+            opt = list(it.get("optional", {}))
+            order = req + opt
+            # 连线输入：自定义类型（QWEN35_*）在 ComfyUI 里是插槽，不占 widgets 槽位
+            line = [k for k, v in it.get("optional", {}).items()
+                    if isinstance(v[0], str) and v[0].startswith("QWEN35_")]
+            # 图片输入：图片预览控件会在 VALUES 里留 None，但示例工作流里不算控件
+            img = [k for k in order if k.startswith("image") and k != "image_exts"]
+            _NODE_META[cname] = {
+                "widgets": len(order) - len(line) - len(img),
+                "required": len(req),
+                "optional": len(opt),
+                "link_inputs": line,
+                "image_inputs": img,
+            }
+    except Exception as e:  # torch 缺失 / 节点导入失败时不该让校验整体挂掉
+        _NODE_META["_error"] = f"{type(e).__name__}: {e}"
+    return _NODE_META
+
+
+def expect_widgets(cname):
+    """返回期望的 widgets 数；取不到返回 None。"""
+    return node_widget_counts().get(cname, {}).get("widgets")
+
 
 def check(fname):
     global problems, notes
@@ -105,8 +196,13 @@ def check(fname):
                   f"bilingual={w[17]!r}")
             if len(w) >= 5:
                 print(f"        quantization={w[3]!r}  attention={w[4]!r}")
-            if len(w) != 18:
-                problems.append(f"Qwen 节点 widgets 应为 18 项，实际 {len(w)}")
+            _exp = expect_widgets("Qwen35PromptEnhancer")
+            if _exp is None:
+                notes.append("取不到 Qwen 节点 INPUT_TYPES，跳过 widgets 数量校验"
+                             + ("（" + node_widget_counts()["_error"] + "）"
+                                if "_error" in node_widget_counts() else ""))
+            elif len(w) != _exp:
+                problems.append(f"Qwen 节点 widgets 应为 {_exp} 项，实际 {len(w)}")
             if len(w) >= 5 and w[4] not in ("auto", "flash_attention_2", "sdpa", "eager"):
                 problems.append(
                     f"Qwen 节点 attention 非法: {w[4]!r}（应为 auto / flash_attention_2 / sdpa / eager）")
@@ -142,8 +238,13 @@ def check(fname):
                 print(f"        bilingual={w[25]!r}  max_output_chars={w[26]!r}")
             if len(w) >= 28:
                 print(f"        caption_mode={w[27]!r}")
-            if len(w) != 28:
-                problems.append(f"BatchTagger widgets 应为 28 项，实际 {len(w)}")
+            _expb = expect_widgets("Qwen35BatchImageTagger")
+            if _expb is None:
+                notes.append("取不到 BatchTagger INPUT_TYPES，跳过 widgets 数量校验"
+                             + ("（" + node_widget_counts()["_error"] + "）"
+                                if "_error" in node_widget_counts() else ""))
+            elif len(w) != _expb:
+                problems.append(f"BatchTagger widgets 应为 {_expb} 项，实际 {len(w)}")
             if len(w) >= 14:
                 # system_preset 是动态下拉（选项来自 presets/tagging_system_prompts.json），
                 # 这里只能校验它非空；具体预设名是否有效由 test_qwen35_tagger.py 覆盖。
@@ -246,6 +347,22 @@ def check(fname):
 
 
 total = 0
+
+# 期望的控件数是从 nodes.py 的 INPUT_TYPES 现算的，这里先打出来，
+# 方便和 nodes.py 的键顺序对照（数字对不上时知道该看哪一边）。
+_meta = node_widget_counts()
+if "_error" in _meta:
+    print("!! 读 nodes.py 取 INPUT_TYPES 失败：", _meta["_error"])
+    print("   （widgets 数量校验会退化成 note，不影响其它检查）")
+for _c in ("Qwen35PromptEnhancer", "Qwen35BatchImageTagger"):
+    if _c in _meta:
+        _m = _meta[_c]
+        print(f"{_c}: 期望 widgets = {_m['widgets']}  "
+              f"(required {_m['required']} + optional {_m['optional']}"
+              f" - 连线输入 {len(_m['link_inputs'])} {_m['link_inputs']}"
+              f" - 图片插槽 {len(_m['image_inputs'])} {_m['image_inputs']})")
+print()
+
 for f in ("h3_i2v_qwen35.json", "h3_ref2v_multi_qwen35.json",
           # 批量打标节点的示例：widgets_values 必须与 INPUT_TYPES 逐位对齐，
           # 错位时 ComfyUI 不报错、只是值悄悄串位，所以在这里也卡一道。

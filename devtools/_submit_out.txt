@@ -1,0 +1,6 @@
+SUBMITTED pid=b9be2f51-69f3-4d9d-b468-503b99e0d00b  imgs=4  tmp=C:\Users\ADMIN\AppData\Local\Temp\qwen35_spy_mrn4tlf2
+DONE in 315.7s
+  片段合计    : 64 个（平均 16.0 个/次）
+  输出 token  : 1119（平均 279.8 tok/次）
+  打标耗时    : 296.01s（74.00s/次，3.8 tok/s）
+  合计        : 313.47s

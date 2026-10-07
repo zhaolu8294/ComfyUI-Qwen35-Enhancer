@@ -1,0 +1,32 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Detected Windows operating system. Triton does not have an official Windows release, thus FLA will not be adapted for Windows, and any potential errors will not be fixed. Please consider using a Linux environment for compatibility.
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+
+====================================================================================
+STEP 0  fla 可导入性
+====================================================================================
+  隔离目录: C:\Users\ADMIN\WorkBuddy\2026-10-06-18-56-50\h3_workflow\_fla_probe02.2
+  目录存在: True
+  ✓ import fla 成功  版本 0.2.2
+  triton 3.7.0 (triton-windows)
+
+====================================================================================
+STEP 1  transformers 是否认到 fast path
+====================================================================================
+  is_fast_path_available = False
+    causal_conv1d_fn                   = None（回退 torch）
+    causal_conv1d_update               = None（回退 torch）
+    chunk_gated_delta_rule             = ✓ fla.ops.gated_delta_rule.chunk
+    fused_recurrent_gated_delta_rule   = ✓ fla.ops.gated_delta_rule.fused_recurrent
+    FusedRMSNormGated                  = ✓ fla.modules.fused_norm_gate
+  注：解码主循环用的是 fused_recurrent_gated_delta_rule，它非 None 就已经吃到主要收益。
+
+====================================================================================
+STEP 2  加载 HF 9B 并打标（同 diagnose_ab_backend 的配置）
+====================================================================================
+  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_fla_zzhdfwky
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:00<10:42,  1.18it/s]Loading weights:   0%|          | 2/760 [00:01<08:27,  1.49it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:47, 15.65it/s]Loading weights:   4%|▍         | 29/760 [00:01<00:22, 31.88it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:15, 47.29it/s]Loading weights:   7%|▋         | 53/760 [00:01<00:12, 54.61it/s]Loading weights:   9%|▉         | 67/760 [00:01<00:09, 71.26it/s]Loading weights:  11%|█         | 81/760 [00:02<00:08, 81.30it/s]Loading weights:  12%|█▎        | 95/760 [00:02<00:07, 90.20it/s]Loading weights:  14%|█▍        | 106/760 [00:02<00:07, 88.29it/s]Loading weights:  16%|█▌        | 120/760 [00:02<00:06, 95.94it/s]Loading weights:  18%|█▊        | 133/760 [00:02<00:06, 102.11it/s]Loading weights:  19%|█▉        | 147/760 [00:02<00:05, 106.09it/s]Loading weights:  21%|██        | 159/760 [00:02<00:06, 97.94it/s] Loading weights:  23%|██▎       | 173/760 [00:02<00:05, 102.62it/s]Loading weights:  25%|██▍       | 187/760 [00:03<00:05, 105.90it/s]Loading weights:  26%|██▋       | 201/760 [00:03<00:05, 107.80it/s]Loading weights:  28%|██▊       | 212/760 [00:03<00:05, 102.69it/s]Loading weights:  30%|██▉       | 226/760 [00:03<00:04, 108.93it/s]Loading weights:  32%|███▏      | 240/760 [00:03<00:04, 109.32it/s]Loading weights:  33%|███▎      | 254/760 [00:03<00:04, 111.32it/s]Loading weights:  35%|███▌      | 266/760 [00:03<00:04, 103.13it/s]Loading weights:  37%|███▋      | 280/760 [00:03<00:04, 105.32it/s]Loading weights:  39%|███▊      | 294/760 [00:04<00:04, 108.22it/s]Loading weights:  41%|████      | 308/760 [00:04<00:04, 110.32it/s]Loading weights:  42%|████▏     | 320/760 [00:04<00:04, 108.55it/s]Loading weights:  44%|████▍     | 333/760 [00:04<00:03, 107.89it/s]Loading weights:  46%|████▌     | 347/760 [00:04<00:03, 109.61it/s]Loading weights:  48%|████▊     | 361/760 [00:04<00:03, 110.66it/s]Loading weights:  49%|████▉     | 373/760 [00:04<00:03, 108.90it/s]Loading weights:  51%|█████     | 386/760 [00:04<00:03, 109.13it/s]Loading weights:  53%|█████▎    | 400/760 [00:05<00:03, 112.15it/s]Loading weights:  54%|█████▍    | 413/760 [00:05<00:03, 111.86it/s]Loading weights:  56%|█████▌    | 425/760 [00:05<00:03, 111.25it/s]Loading weights:  73%|███████▎  | 553/760 [00:05<00:00, 424.73it/s]Loading weights:  90%|█████████ | 687/760 [00:05<00:00, 678.61it/s]Loading weights: 100%|██████████| 760/760 [00:05<00:00, 136.98it/s]
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\triton\language\core.py:2284: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
+  warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")

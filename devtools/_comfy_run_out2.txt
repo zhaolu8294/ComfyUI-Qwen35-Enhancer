@@ -1,0 +1,84 @@
+临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_api_e4ip5pux
+配置: character / extra_long / raw / 上限 784 / 1536 / 思考关 / 自检关
+ComfyUI argv = ['E:\\AI\\ComfyUI-aki-v3\\ComfyUI\\main.py', '--auto-launch', '--preview-method', 'auto', '--cuda-malloc']
+
+====================================================================================
+[1/2] ComfyUI 进程内   huihui-ai_Huihui-Qwen3.5-9B-abliterated  [Qwen3_5ForConditionalGeneration]
+====================================================================================
+跑前  显存 22.44 GiB 可用 / 内存 40.83 GiB 可用
+已提交 prompt_id = 39c5209a-7b29-4d63-8790-e9dd066d4a55
+
+墙钟总耗时（含排队/加载/卸载）: 125.3s
+状态: success  completed=True
+  --- 节点返回的报告 ---
+  | [Qwen35] ========== 批量打标 ==========
+  |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_api_e4ip5pux
+  |   推理后端    : transformers / HF 模型（torch 进程内）
+  |   打标模式    : 从零打标
+  |   系统提示词  : character（预设：角色/插画（English））
+  |   描述长度    : 8~15 句 / 250~450 字（desc_length=extra_long，已改写提示词里的长度条款）
+  |   描述语言    : 英文 → 同名 .txt
+  |   输出格式    : 英文=raw
+  |   思考模式    : 关 —— 直接出结果（推荐）
+  |   一轮自检    : 关 —— 生成即定稿
+  |   扫描到      : 3 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  |   待处理      : 3 张 / 3 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+  | [Qwen35] ========== 打标汇总 ==========
+  |   成功 / 失败 : 3 / 0
+  |   片段合计    : 46 个（平均 15.3 个/次）
+  |   输出 token  : 858（平均 286.0 tok/次）
+  |   打标耗时    : 108.25s（36.08s/次，7.9 tok/s）
+  |   首张 prefill:   1.24s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  |   加载模型    :  13.19s  (本次新加载)
+  |   卸载其他模型:   0.70s
+  |   卸载打标模型:   1.68s
+  |   --------------------------------
+  |   合计        : 124.50s
+  |   例          : CellWorks39.txt -> A single female character dominates the composition with a very large head and a small, slender body. She has voluminous white hair styled in a high, rounded sh
+  |   例          : CellWorks42.txt -> A single female character with long, voluminous purple hair that flows freely down her back and frames her face sits in a dynamic pose against a plain white bac
+  |   例          : Qwen_image_2.1_00026.txt -> A single character with long, flowing lavender hair dominates the frame, her face turned in profile to the left. Her hair is styled with sharp, distinct strands
+  |   ✓ 全部成功
+
+
+====================================================================================
+[2/2] ComfyUI 进程内   Qwen3-VL-8B-Instruct  [Qwen3VLForConditionalGeneration]
+====================================================================================
+跑前  显存 22.44 GiB 可用 / 内存 40.79 GiB 可用
+已提交 prompt_id = de488204-a14a-4c47-93ef-14dd04424592
+
+墙钟总耗时（含排队/加载/卸载）: 100.0s
+状态: success  completed=True
+  --- 节点返回的报告 ---
+  | [Qwen35] ========== 批量打标 ==========
+  |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_api_e4ip5pux
+  |   推理后端    : transformers / HF 模型（torch 进程内）
+  |   打标模式    : 从零打标
+  |   系统提示词  : character（预设：角色/插画（English））
+  |   描述长度    : 8~15 句 / 250~450 字（desc_length=extra_long，已改写提示词里的长度条款）
+  |   描述语言    : 英文 → 同名 .txt
+  |   输出格式    : 英文=raw
+  |   思考模式    : 关 —— 直接出结果（推荐）
+  |   一轮自检    : 关 —— 生成即定稿
+  |   扫描到      : 3 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  |   待处理      : 3 张 / 3 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+  | [Qwen35] ========== 打标汇总 ==========
+  |   成功 / 失败 : 3 / 0
+  |   片段合计    : 31 个（平均 10.3 个/次）
+  |   输出 token  : 538（平均 179.3 tok/次）
+  |   打标耗时    :  66.90s（22.30s/次，8.0 tok/s）
+  |   首张 prefill:   0.69s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  |   加载模型    :  26.99s  (本次新加载)
+  |   卸载其他模型:   0.73s
+  |   卸载打标模型:   1.65s
+  |   --------------------------------
+  |   合计        :  96.98s
+  |   例          : CellWorks39.txt -> A young woman with voluminous white hair streaked with pink highlights and large blue eyes is shown in two separate panels. In the top panel, she has her arms r
+  |   例          : CellWorks42.txt -> A young woman with long, flowing purple hair and golden eyes is shown from the waist up. Her hair is voluminous and styled in loose waves, partially covering he
+  |   例          : Qwen_image_2.1_00026.txt -> A young person with long purple hair and dark eyes is shown from the side, their face partially obscured by strands of hair. They are holding a thick, brown obj
+  |   ✓ 全部成功
+
+
+基线：独立进程同配置 20.5 tok/s（native）/ 19.4（cudaMallocAsync）
+      凌晨 ComfyUI 内同模型 20.9~23.1 tok/s

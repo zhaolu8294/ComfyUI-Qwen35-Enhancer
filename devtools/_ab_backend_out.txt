@@ -1,0 +1,100 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_ab_w1iak9ri
+素材: ['CellWorks39.jpg', 'CellWorks42.jpg', 'Qwen_image_2.1_00026.png']
+配置: character 预设 / extra_long / raw / 上限 784 / 1536 长边 / 思考关 / 自检关
+
+====================================================================================
+A  HF 9B（transformers 进程内）
+====================================================================================
+  跑前可用显存 22.54 GiB
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:00<10:15,  1.23it/s]Loading weights:   0%|          | 2/760 [00:01<08:08,  1.55it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:45, 16.25it/s]Loading weights:   4%|▍         | 29/760 [00:01<00:21, 33.29it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:14, 50.39it/s]Loading weights:   7%|▋         | 54/760 [00:01<00:11, 61.37it/s]Loading weights:   9%|▉         | 68/760 [00:01<00:09, 75.84it/s]Loading weights:  11%|█         | 82/760 [00:01<00:07, 87.35it/s]Loading weights:  13%|█▎        | 96/760 [00:02<00:06, 96.70it/s]Loading weights:  14%|█▍        | 108/760 [00:02<00:06, 100.46it/s]Loading weights:  16%|█▌        | 121/760 [00:02<00:06, 102.28it/s]Loading weights:  18%|█▊        | 135/760 [00:02<00:05, 106.62it/s]Loading weights:  20%|█▉        | 149/760 [00:02<00:05, 111.28it/s]Loading weights:  21%|██        | 161/760 [00:02<00:05, 111.24it/s]Loading weights:  23%|██▎       | 174/760 [00:02<00:05, 111.68it/s]Loading weights:  25%|██▍       | 188/760 [00:02<00:04, 115.42it/s]Loading weights:  26%|██▋       | 201/760 [00:03<00:04, 115.21it/s]Loading weights:  28%|██▊       | 213/760 [00:03<00:04, 114.40it/s]Loading weights:  30%|██▉       | 227/760 [00:03<00:04, 115.80it/s]Loading weights:  32%|███▏      | 240/760 [00:03<00:04, 109.68it/s]Loading weights:  34%|███▎      | 255/760 [00:03<00:04, 113.02it/s]Loading weights:  35%|███▌      | 267/760 [00:03<00:04, 112.81it/s]Loading weights:  37%|███▋      | 280/760 [00:03<00:04, 112.39it/s]Loading weights:  39%|███▊      | 294/760 [00:03<00:04, 114.78it/s]Loading weights:  41%|████      | 308/760 [00:03<00:03, 116.06it/s]Loading weights:  42%|████▏     | 320/760 [00:04<00:03, 114.01it/s]Loading weights:  44%|████▍     | 333/760 [00:04<00:03, 114.08it/s]Loading weights:  46%|████▌     | 347/760 [00:04<00:03, 116.45it/s]Loading weights:  47%|████▋     | 360/760 [00:04<00:03, 115.17it/s]Loading weights:  49%|████▉     | 372/760 [00:04<00:03, 114.00it/s]Loading weights:  51%|█████     | 385/760 [00:04<00:03, 112.82it/s]Loading weights:  52%|█████▎    | 399/760 [00:04<00:03, 114.59it/s]Loading weights:  54%|█████▍    | 414/760 [00:04<00:02, 118.50it/s]Loading weights:  56%|█████▌    | 426/760 [00:04<00:02, 116.61it/s]Loading weights:  75%|███████▍  | 567/760 [00:05<00:00, 470.06it/s]Loading weights:  94%|█████████▎| 711/760 [00:05<00:00, 739.95it/s]Loading weights: 100%|██████████| 760/760 [00:05<00:00, 145.22it/s]
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+  跑完耗时 52.9s，跑后可用显存 22.44 GiB
+  --- 报告 ---
+  | [Qwen35] ========== 批量打标 ==========
+  |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_ab_w1iak9ri
+  |   推理后端    : transformers / HF 模型（torch 进程内）
+  |   打标模式    : 从零打标
+  |   系统提示词  : character（预设：角色/插画（English））
+  |   描述长度    : 8~15 句 / 250~450 字（desc_length=extra_long，已改写提示词里的长度条款）
+  |   描述语言    : 英文 → 同名 .txt
+  |   输出格式    : 英文=raw
+  |   思考模式    : 关 —— 直接出结果（推荐）
+  |   一轮自检    : 关 —— 生成即定稿
+  |   扫描到      : 3 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  |   待处理      : 3 张 / 3 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+  | [Qwen35] ========== 打标汇总 ==========
+  |   成功 / 失败 : 3 / 0
+  |   片段合计    : 46 个（平均 15.3 个/次）
+  |   输出 token  : 858（平均 286.0 tok/次）
+  |   打标耗时    :  39.77s（13.26s/次，21.6 tok/s）
+  |   首张 prefill:   1.12s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  |   加载模型    :  12.74s  (本次新加载)
+  |   卸载其他模型:   0.03s
+  |   卸载打标模型:   0.30s
+  |   --------------------------------
+  |   合计        :  52.86s
+  |   例          : CellWorks39.txt -> A single female character dominates the composition with a very large head and a small, slender body. She has voluminous white hair styled in a high, rounded sh
+  |   例          : CellWorks42.txt -> A single female character with long, voluminous purple hair that flows freely down her back and frames her face sits in a dynamic pose against a plain white bac
+  |   例          : Qwen_image_2.1_00026.txt -> A single character with long, flowing lavender hair dominates the frame, her face turned in profile to the left. Her hair is styled with sharp, distinct strands
+  |   ✓ 全部成功
+  >>> 合计 858 tok / 39.8s = 21.6 tok/s   （成功率 3 / 0）
+
+====================================================================================
+B  GGUF 27B（llama-server 独立进程）
+====================================================================================
+  主干: Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf  (16.19 GB)
+
+====================================================================================
+B  GGUF 27B 跑标
+====================================================================================
+  跑前可用显存 22.44 GiB
+  跑完耗时 56.2s，跑后可用显存 22.44 GiB
+  --- 报告 ---
+  | [Qwen35] ========== 批量打标 ==========
+  |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_ab_w1iak9ri
+  |   推理后端    : llama.cpp / GGUF（量化权重，独立进程 llama-server）
+  |   打标模式    : 从零打标
+  |   系统提示词  : character（预设：角色/插画（English））
+  |   描述长度    : 8~15 句 / 250~450 字（desc_length=extra_long，已改写提示词里的长度条款）
+  |   描述语言    : 英文 → 同名 .txt
+  |   输出格式    : 英文=raw
+  |   思考模式    : 关 —— 直接出结果（推荐）
+  |   一轮自检    : 关 —— 生成即定稿
+  |   扫描到      : 3 张（扩展名 .bmp/.jpeg/.jpg/.png/.webp，仅当前目录）
+  |   待处理      : 3 张 / 3 次生成（整张无需处理跳过 0 张，overwrite=overwrite）
+  |   输出        : 与图片同目录同名 .txt（后缀 ''，编码 utf-8）
+  | [Qwen35] ========== 打标汇总 ==========
+  |   成功 / 失败 : 3 / 0
+  |   片段合计    : 51 个（平均 17.0 个/次）
+  |   输出 token  : 789（平均 263.0 tok/次）
+  |   打标耗时    :  23.10s（7.70s/次，34.1 tok/s）
+  |   首张 prefill:   1.81s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
+  |   后端        : llama.cpp llama-server（端口 7736）
+  |   模型        : Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf  +  mmproj-model-bf16.gguf
+  |   加载后端    :  31.23s
+  |   释放后端    :   1.68s（llama-server 已退出，显存已归还）
+  |   --------------------------------
+  |   合计        :  56.22s
+  |   例          : CellWorks39.txt -> The image features one main character and two smaller inset figures. The primary figure is a young woman with a very large head relative to her body, giving her
+  |   例          : CellWorks42.txt -> A single young woman with a slender build and long, voluminous purple hair that flows outward in large waves around her head and down past her shoulders. She ha
+  |   例          : Qwen_image_2.1_00026.txt -> A single character is shown in an extreme close-up, cropped so that only the lower half of the face, the neck, the shoulder, and two hands are visible within th
+  |   ✓ 全部成功
+  >>> 合计 789 tok / 23.1s = 34.2 tok/s   （成功率 3 / 0）
+
+====================================================================================
+汇总
+====================================================================================
+  后端                总耗时s     输出tok       解码s     tok/s
+  HF 9B             52.9       858      39.8      21.6
+  GGUF 27B          56.2       789      23.1      34.2
+
+  GGUF 比 HF 快 0.6 倍（21.6 -> 34.2 tok/s）
+
+  已释放后端

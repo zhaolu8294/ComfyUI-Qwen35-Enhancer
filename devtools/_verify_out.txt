@@ -1,0 +1,6 @@
+SUBMITTED pid=bcdca954-3c21-4187-a78b-f1bebbb3036f  imgs=3  tmp=C:\Users\ADMIN\AppData\Local\Temp\qwen35_verify_29zsae76
+DONE in 58.9s
+  片段合计    : 46 个（平均 15.3 个/次）
+  输出 token  : 858（平均 286.0 tok/次）
+  打标耗时    :  46.84s（15.61s/次，18.3 tok/s）
+  合计        :  56.87s

@@ -1,0 +1,6 @@
+﻿PID=45696 Name=pythonw.exe
+  Started=10/05/2026 00:24:04
+  WS_MB=6  Private_MB=89
+  ParentPID=40536
+  CmdLine="F:\AI\musubi-tuner_new\Python\pythonw.exe"  "F:\AI\musubi-tuner_new\main.py"
+

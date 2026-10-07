@@ -1,0 +1,24 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+====================================================================================
+步速对照：分配器
+====================================================================================
+  PYTORCH_CUDA_ALLOC_CONF = backend:cudaMallocAsync
+  torch 实际分配器后端      = cudaMallocAsync
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:00<10:46,  1.17it/s]Loading weights:   0%|          | 2/760 [00:01<08:29,  1.49it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:47, 15.57it/s]Loading weights:   4%|▎         | 28/760 [00:01<00:23, 30.64it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:14, 49.00it/s]Loading weights:   7%|▋         | 54/760 [00:01<00:11, 59.50it/s]Loading weights:   9%|▉         | 67/760 [00:01<00:09, 71.57it/s]Loading weights:  11%|█         | 82/760 [00:02<00:07, 85.58it/s]Loading weights:  12%|█▎        | 95/760 [00:02<00:07, 92.08it/s]Loading weights:  14%|█▍        | 107/760 [00:02<00:06, 96.82it/s]Loading weights:  16%|█▌        | 121/760 [00:02<00:06, 101.98it/s]Loading weights:  18%|█▊        | 134/760 [00:02<00:06, 103.80it/s]Loading weights:  19%|█▉        | 148/760 [00:02<00:05, 108.95it/s]Loading weights:  21%|██        | 160/760 [00:02<00:05, 109.64it/s]Loading weights:  23%|██▎       | 174/760 [00:02<00:05, 112.77it/s]Loading weights:  25%|██▍       | 188/760 [00:02<00:04, 115.25it/s]Loading weights:  26%|██▋       | 201/760 [00:03<00:04, 113.53it/s]Loading weights:  28%|██▊       | 213/760 [00:03<00:04, 111.98it/s]Loading weights:  30%|██▉       | 227/760 [00:03<00:04, 112.77it/s]Loading weights:  32%|███▏      | 241/760 [00:03<00:04, 112.81it/s]Loading weights:  33%|███▎      | 254/760 [00:03<00:04, 109.33it/s]Loading weights:  35%|███▌      | 266/760 [00:03<00:04, 108.74it/s]Loading weights:  37%|███▋      | 279/760 [00:03<00:04, 107.79it/s]Loading weights:  39%|███▊      | 294/760 [00:03<00:04, 113.45it/s]Loading weights:  41%|████      | 308/760 [00:04<00:03, 113.94it/s]Loading weights:  42%|████▏     | 320/760 [00:04<00:03, 110.57it/s]Loading weights:  44%|████▍     | 333/760 [00:04<00:03, 110.24it/s]Loading weights:  46%|████▌     | 347/760 [00:04<00:03, 112.10it/s]Loading weights:  48%|████▊     | 361/760 [00:04<00:03, 113.35it/s]Loading weights:  49%|████▉     | 373/760 [00:04<00:03, 110.16it/s]Loading weights:  51%|█████     | 386/760 [00:04<00:03, 109.96it/s]Loading weights:  53%|█████▎    | 400/760 [00:04<00:03, 112.08it/s]Loading weights:  54%|█████▍    | 414/760 [00:05<00:03, 113.85it/s]Loading weights:  56%|█████▌    | 426/760 [00:05<00:02, 111.72it/s]Loading weights:  74%|███████▍  | 562/760 [00:05<00:00, 446.02it/s]Loading weights:  92%|█████████▏| 697/760 [00:05<00:00, 694.41it/s]Loading weights: 100%|██████████| 760/760 [00:05<00:00, 140.71it/s]
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+
+  --- 报告关键行 ---
+  | 成功 / 失败 : 2 / 0
+  | 输出 token  : 532（平均 266.0 tok/次）
+  | 打标耗时    :  27.37s（13.69s/次，19.4 tok/s）
+  | 加载模型    :  13.17s  (本次新加载)
+  | 合计        :  41.01s
+
+  墙钟总耗时 41.0s
+
+  基线参考（默认 native，3 张图）: 21.6 tok/s  [diagnose_ab_backend.py]
+[W1007 22:40:26.000000000 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator ())

@@ -1,0 +1,40 @@
+E:\AI\ComfyUI-aki-v3\python\Lib\site-packages\torch\cuda\__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_twice_1sqvni5d
+
+========================================================================================
+STEP 0  基线
+========================================================================================
+  基线                     可用内存  41.51 GiB ( +0.00) | 可用显存  22.54 GiB | RSS   0.51 GiB ( +0.00)
+
+========================================================================================
+STEP 1  HF 9B（transformers，进程内）
+========================================================================================
+  HF 轮-开始前               可用内存  41.43 GiB ( -0.08) | 可用显存  22.54 GiB | RSS   0.63 GiB ( +0.11)
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/760 [00:00<?, ?it/s]Loading weights:   0%|          | 1/760 [00:00<11:50,  1.07it/s]Loading weights:   0%|          | 2/760 [00:01<08:58,  1.41it/s]Loading weights:   2%|▏         | 15/760 [00:01<00:49, 14.95it/s]Loading weights:   4%|▍         | 29/760 [00:01<00:23, 31.15it/s]Loading weights:   6%|▌         | 43/760 [00:01<00:15, 47.76it/s]Loading weights:   7%|▋         | 54/760 [00:01<00:11, 59.05it/s]Loading weights:   9%|▉         | 67/760 [00:02<00:09, 71.86it/s]Loading weights:  11%|█         | 82/760 [00:02<00:07, 87.84it/s]Loading weights:  13%|█▎        | 96/760 [00:02<00:06, 98.29it/s]Loading weights:  14%|█▍        | 109/760 [00:02<00:06, 103.96it/s]Loading weights:  16%|█▌        | 122/760 [00:02<00:05, 107.50it/s]Loading weights:  18%|█▊        | 135/760 [00:02<00:05, 110.69it/s]Loading weights:  20%|█▉        | 149/760 [00:02<00:05, 116.62it/s]Loading weights:  21%|██▏       | 162/760 [00:02<00:05, 119.40it/s]Loading weights:  23%|██▎       | 175/760 [00:02<00:04, 119.30it/s]Loading weights:  25%|██▍       | 188/760 [00:02<00:04, 115.97it/s]Loading weights:  26%|██▋       | 201/760 [00:03<00:04, 113.22it/s]Loading weights:  28%|██▊       | 213/760 [00:03<00:04, 109.88it/s]Loading weights:  30%|██▉       | 227/760 [00:03<00:04, 111.75it/s]Loading weights:  32%|███▏      | 240/760 [00:03<00:04, 111.31it/s]Loading weights:  33%|███▎      | 254/760 [00:03<00:04, 111.52it/s]Loading weights:  35%|███▌      | 266/760 [00:03<00:04, 111.52it/s]Loading weights:  37%|███▋      | 280/760 [00:03<00:04, 114.09it/s]Loading weights:  39%|███▊      | 294/760 [00:03<00:04, 115.14it/s]Loading weights:  41%|████      | 308/760 [00:04<00:03, 115.79it/s]Loading weights:  42%|████▏     | 320/760 [00:04<00:03, 113.22it/s]Loading weights:  44%|████▍     | 333/760 [00:04<00:03, 112.03it/s]Loading weights:  46%|████▌     | 346/760 [00:04<00:03, 111.50it/s]Loading weights:  47%|████▋     | 360/760 [00:04<00:03, 113.48it/s]Loading weights:  49%|████▉     | 372/760 [00:04<00:03, 111.41it/s]Loading weights:  51%|█████     | 386/760 [00:04<00:03, 113.30it/s]Loading weights:  53%|█████▎    | 400/760 [00:04<00:03, 112.53it/s]Loading weights:  54%|█████▍    | 413/760 [00:04<00:02, 116.42it/s]Loading weights:  56%|█████▌    | 425/760 [00:05<00:03, 106.84it/s]Loading weights:  73%|███████▎  | 555/760 [00:05<00:00, 417.30it/s]Loading weights:  90%|█████████ | 685/760 [00:05<00:00, 656.49it/s]Loading weights: 100%|██████████| 760/760 [00:05<00:00, 140.68it/s]
+[Qwen35] 线性注意力：24 层里 24 层走 torch 回退 —— 这些层在解码时逐 token 跑 fp32 小算子，实测 1.0ms/层（融合内核 0.66ms/层），24 层即占解码约一半。装 fla 可换掉：pip install flash-linear-attention（纯 Python wheel，无需编译；装完重启 ComfyUI 即生效）
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+[transformers] Setting `pad_token_id` to `eos_token_id`:248044 for open-end generation.
+  HF 轮结果: ['[Qwen35] ========== 批量打标 ==========']
+  （耗时 30.9s）
+  HF 轮-结束后               可用内存  39.86 GiB ( -1.65) | 可用显存   3.68 GiB | RSS   2.05 GiB ( +1.54)
+
+========================================================================================
+STEP 2  GGUF 27B（llama-server 独立进程）
+========================================================================================
+  GGUF 轮-开始前             可用内存  39.86 GiB ( -1.65) | 可用显存   3.64 GiB | RSS   2.05 GiB ( +1.54)
+  GGUF 轮结果: ['[Qwen35] ========== 批量打标 ==========']
+  （耗时 18.6s）
+  GGUF 轮-结束后             可用内存  39.93 GiB ( -1.59) | 可用显存  22.44 GiB | RSS   2.05 GiB ( +1.54)
+
+========================================================================================
+STEP 3  静置 30s，看有没有延迟回收
+========================================================================================
+  静置后                    可用内存  39.85 GiB ( -1.66) | 可用显存  22.44 GiB | RSS   2.05 GiB ( +1.54)
+
+========================================================================================
+结论
+========================================================================================
+  · 若「GGUF 轮-结束后」比「基线」低 20 GiB 量级 -> 复现成功，凶手就在换后端这一步
+  · 若基本回到基线 -> 这条链路本身不泄漏；现场那 22.5 GiB 另有来源

@@ -334,18 +334,31 @@ print("=" * 74)
 print("E) widgets 顺序（防止旧工作流错位）")
 print("=" * 74)
 it = QM.Qwen35PromptEnhancer.INPUT_TYPES()
-order = list(it["required"]) + [k for k in it["optional"] if not k.startswith("image")]
+# backend 是**连线输入**（类型 QWEN35_BACKEND，由 Qwen35GGUFServer 节点连线提供），
+# 它不占 widgets_values 的位置 —— 与打标节点同一约定（见 test_qwen35_tagger.py
+# 的「连线输入不占 widgets_values 的位置」与「widgets 总数 = 32」两条）。
+# 这里必须把它排除：否则会把"连线输入"误判成"新控件插在了 required 中间"，
+# 得出"顺序错位"的错误结论（2026-10-07 踩到，backend 是当天新增的）。
+_line_inputs = [k for k, v in it["optional"].items()
+                if isinstance(v[0], str) and v[0] == "QWEN35_BACKEND"]
+order = list(it["required"]) + [
+    k for k in it["optional"]
+    if k not in _line_inputs and not k.startswith("image")]
 print("  widgets 顺序:")
 for i, k in enumerate(order):
     print(f"    [{i:>2}] {k}")
-check("widgets 总数 = 18", len(order) == 18, str(len(order)))
+check("连线输入只有 backend（不占 widgets 槽位）",
+      _line_inputs == ["backend"], str(_line_inputs))
+check("widgets 总数 = 18（backend 是连线输入，不计数）",
+      len(order) == 18, str(len(order)))
 check("bilingual 在末位", order[-1] == "bilingual", order[-1])
 check("prompt_zh 是新输出且不挤占旧端口",
       QM.Qwen35PromptEnhancer.RETURN_NAMES == ("prompt", "prompt_zh"),
       str(QM.Qwen35PromptEnhancer.RETURN_NAMES))
 
 sig = list(inspect.signature(QM.Qwen35PromptEnhancer.enhance).parameters.keys())
-sig = [s for s in sig if s != "self" and s != "unique_id" and not s.startswith("image")]
+sig = [s for s in sig if s not in ("self", "unique_id")
+       and not s.startswith("image") and s not in _line_inputs]
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
 # 回退后双语默认关闭：默认路径下第二段根本不执行，速度与单语版一致
@@ -933,8 +946,17 @@ try:
     check("解码偏慢（6.0 tok/s）且全走回退 -> 给出定量提示",
           bool(QM._linear_attn_decode_note(263, 43.95)))
     _note = QM._linear_attn_decode_note(263, 43.95)
-    check("提示里含实测 ms/层 与 fla 指引",
-          "ms/层" in _note and "flash-linear-attention" in _note, _note[:60])
+    check("提示里含 3365 kernel/token 的实测口径",
+          "3365" in _note, _note[:60])
+    check("提示里含「不要装 flash-linear-attention」的说明",
+          "flash-linear-attention" in _note, _note[:60])
+    # 2026-10-07：解码慢的实测定因是「线程被调度到 E-core」，不是线性注意力。
+    # 提示必须把用户引向 P-core 亲和性，而不是引向装 fla（后者已被证伪且会让模型加载失败）。
+    check("提示把「慢」指向 CPU 的 P-core/E-core，并给出实测数字",
+          "P-core" in _note and "E-core" in _note
+          and "18.8" in _note and "2.66" in _note, _note[-90:])
+    check("提示给出可执行的解法（钉 P-core 的工具名）",
+          "pin_comfyui_pcores" in _note, _note[-90:])
     check("解码够快时不提示", QM._linear_attn_decode_note(600, 12.0) == "")
     check("样本太小不提示", QM._linear_attn_decode_note(8, 5.0) == "")
     QM._LIN_ATTN_FUSED, QM._LIN_ATTN_TOTAL = 24, 24
