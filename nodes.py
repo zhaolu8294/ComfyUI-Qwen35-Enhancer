@@ -1430,7 +1430,10 @@ class Qwen35PromptEnhancer:
                 "max_new_tokens": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 64}),
                 "seed": ("INT", {"default": 42, "min": 0, "max": 0xFFFFFFFF}),
                 "custom_model_path": ("STRING", {"default": ""}),
-                "max_image_side": ("INT", {"default": 1280, "min": 0, "max": 4096, "step": 128}),
+                # 视觉 token 数 = (w/32)*(h/32)。1280 -> 1536 只多约 44% 的图片
+                # token（实测 prefill 1.0s -> 1.5s），但小物件和细节的认对率明显
+                # 更高。时间/显存紧就往下调；设 0 = 不缩，直接送原图。
+                "max_image_side": ("INT", {"default": 1536, "min": 0, "max": 4096, "step": 128}),
                 # ↓ 以下两项追加在最后：旧工作流 widgets 数量不足时自动取默认值，不会错位
                 "show_progress": ("BOOLEAN", {"default": True}),
                 "progress_interval": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 30.0, "step": 0.5}),
@@ -2033,7 +2036,7 @@ class Qwen35PromptEnhancer:
                 image=None, image_2=None, image_3=None, image_4=None, max_images=4,
                 keep_model_loaded=False,
                 unload_other_models=True, temperature=0.4, max_new_tokens=1024,
-                seed=42, custom_model_path="", max_image_side=1280,
+                seed=42, custom_model_path="", max_image_side=1536,
                 show_progress=True, progress_interval=2.0, bilingual="off",
                 backend=None, unique_id=None):
         t_start = time.perf_counter()
@@ -2861,6 +2864,78 @@ _SYNC_DESC = {
     "off": "off —— 两份各判各的，一边被改不会影响另一边",
 }
 
+# ---------------------------------------------------------------------------
+# 一轮带图自检（verify）
+# ---------------------------------------------------------------------------
+# 为什么做这个：模型「认错东西」其实很少是把 A 认成 B，绝大多数是细节层面的
+# 漂移 —— 嘴张着还是闭着、画面切到肩膀还是胸口、丝带在颈后还是两侧、
+# 发色算 silver 还是 blonde。这类断言每条都能回到图上核对，所以让它
+# **对着图逐条查一遍**就能救回来。
+#
+# 实测（4090D + Qwen3.8-27B Q4，同一张图，见 devtools/diagnose_recognition.py）：
+#   · 一轮自检：两张图的真错都被改对，且已写对的句子一个字没动
+#   · 二轮自检：图 1 收敛；图 2 开始来回震荡 —— 把已经正确的颜色改成更主观的
+#     说法（pinkish-red -> salmon-pink -> maroon），甚至自相矛盾。
+#     所以**只跑一轮**，不做迭代。没有客观的停止信号，迭代就没有收敛点。
+#
+# 提示词里这三条缺一不可：
+#   1) 强制逐条列出可核查的断言。泛泛问「你觉得写得对不对」会被自洽偏差带跑：
+#      模型会顺着自己刚写的话往下圆，把错的也说成对的。
+#   2) 每条都要写「图里实际是什么」—— 逼它重新看图，而不是复述自己的文字。
+#   3) 只改 CONTRADICTED 的那部分，明确禁止顺手润色。否则它会把这道工序当成
+#      「再写一遍」，没认错的地方也被改掉，等于白折腾。
+_VERIFY_SYSTEM = """You are a meticulous fact-checker for image captions.
+
+You will be given an image and a caption that was written for it.
+Your job is to verify the caption AGAINST THE IMAGE, claim by claim.
+
+Step 1 - List every concrete, checkable claim in the caption. Break it down:
+how many subjects, hair style and colour, eye colour, skin tone, expression,
+direction of gaze, each piece of clothing, each accessory, each held object,
+pose, and anything about the background or location.
+
+Step 2 - For each claim, look at the image again and decide:
+  SUPPORTED     the image clearly shows this
+  CONTRADICTED  the image clearly shows something else
+  UNCLEAR       the image does not let you tell
+Always write what the image actually shows, in your own words.
+
+Step 3 - Output a corrected caption. Keep exactly the same style, tone, length
+and language as the original. Change ONLY the claims that were CONTRADICTED.
+Do NOT add new details. Do NOT re-describe the image from scratch. Do NOT
+rewrite sentences that were already correct. If nothing was contradicted,
+output the original caption unchanged.
+
+A claim may be changed ONLY if you judged it CONTRADICTED. If it is merely
+UNCLEAR, keep it exactly as written: failing to confirm a detail is not proof
+that it is absent. Dropping a fine detail you could not disprove makes the
+caption worse, not better - when in doubt, leave the original words alone.
+
+Output format, exactly:
+
+CHECKS:
+- <claim> -> <SUPPORTED|CONTRADICTED|UNCLEAR>: <what the image actually shows>
+- ...
+
+CORRECTED:
+<the final caption>"""
+
+_VERIFY_LABEL = "CAPTION TO CHECK:"
+_VERIFY_MARK = "CORRECTED:"
+
+# 档位：off = 生成即定稿（旧行为，一字未改）；once = 生成后带图核查一轮。
+_VERIFY_MODES = ("off", "once")
+
+_VERIFY_DESC = {
+    "off": "off —— 生成即定稿（旧行为）",
+    "once": "once —— 生成后把图与描述一起送回，逐条核验，只改判错的部分",
+}
+
+# 修正稿 / 原稿的长度比要落在这个区间内，否则判为跑偏、丢弃修正、保留原稿。
+# 依据：实测正常修正的长度变化在 ±30% 以内（只是换掉几个词）。超出这个范围
+# 的通常是模型漏了 CORRECTED 标记、把 CHECKS 段当成了正文，或者干脆重写了一篇。
+_VERIFY_LEN_LO, _VERIFY_LEN_HI = 0.4, 2.5
+
 # 预设存在外部 JSON 里，方便直接改文本而不用动代码。
 # 路径：<本节点目录>/presets/tagging_system_prompts.json
 # 文件不存在时会自动生成一份（内容即下面那六套内置预设），直接编辑即可。
@@ -3234,6 +3309,59 @@ def _compose_sync_user_text(instruction, source_text, lang):
     return _compose_labeled_user_text(
         instruction, source_text,
         _label_for(_SYNC_LABEL, _SYNC_LABEL_FALLBACK, lang))
+
+
+def _compose_verify_user_text(caption):
+    """自检的 user 侧文本：一行标签 + 待核查的描述。
+
+    标签用英文 `CAPTION TO CHECK:`，与 _VERIFY_SYSTEM 里的措辞对齐 ——
+    自检指令本身就是英文的，混一个中文标签只会让模型换语言接着写。
+    """
+    return f"{_VERIFY_LABEL}\n{str(caption or '').strip()}"
+
+
+def _extract_corrected(raw, original=""):
+    """从自检输出里取出 CORRECTED 段。取不到就返回原稿。
+
+    这是**唯一**决定「要不要采用修正稿」的地方，所以判据全部朝保守一侧倒：
+    宁可保留一份有错的原稿，也不能把一个残缺或跑偏的结果写进数据集 ——
+    前者肉眼能改，后者是静默污染。
+
+    返回 (最终文本, 状态)。状态供报告统计：
+      fixed    取到了修正稿，且长度合理
+      same     取到了，但与原稿一致（本来就没查出错）
+      no_mark  输出里没有 CORRECTED 标记（模型没按格式来）
+      empty    修正段是空的
+      bad_len  修正稿长度偏离原稿太多，判为跑偏
+      skipped  原稿本身是空的，没什么可查
+    """
+    orig = str(original or "").strip()
+    if not orig:
+        return "", "skipped"
+
+    body = str(raw or "")
+    # 只认「独占行首」的 CORRECTED: —— 泛匹配会把模型解释里顺嘴提到的那个词
+    # 也算上。取最后一个匹配（修正段本来就在最后）。
+    hit = None
+    for hit in re.finditer(r"^\s*CORRECTED\s*:\s*", body, re.M):
+        pass
+    if hit is None:
+        return orig, "no_mark"
+    fixed = body[hit.end():].strip()
+
+    # 去掉 markdown 围栏与首尾多余空白
+    fixed = re.sub(r"^```[A-Za-z0-9_-]*\s*", "", fixed)
+    fixed = re.sub(r"\s*```\s*$", "", fixed).strip()
+    if not fixed:
+        return orig, "empty"
+
+    ratio = len(fixed) / max(1, len(orig))
+    if ratio < _VERIFY_LEN_LO or ratio > _VERIFY_LEN_HI:
+        return orig, "bad_len"
+
+    if fixed == orig:
+        return orig, "same"
+    return fixed, "fixed"
 
 
 # 截断时优先退到这些标点之后；退不到再退到分句标点之前。
@@ -3850,14 +3978,15 @@ def _plan_image_jobs(src, runs, suffix_base, output_encoding,
     return jobs, (n_draft, n_blank, n_same, n_sync, n_both)
 
 
-def _open_image_for_tagging(path, max_side=1280):
+def _open_image_for_tagging(path, max_side=1536):
     """按打标的需要读图：EXIF 转正、统一 RGB、按长边等比缩小。
 
     三件都不是可选项：
       · EXIF：手机/相机竖拍图在文件里是横躺的，不转正模型看到的就是躺着的图。
       · RGB：PNG 带 alpha、灰度、CMYK 直接喂会报错或颜色错乱。
-      · 缩图：视觉 token 数 ∝ 边长²（1024² → ~1000 tok，1536² → ~2300 tok）。
-        打标不需要原分辨率，长边限到 1280 能把 prefill 砍掉近一半。
+      · 缩图：视觉 token 数 = (w/32)*(h/32)（1280 长边 → 约 1200 tok，
+        1536 → 约 1700 tok）。打标不需要原分辨率，默认限到 1536 ——
+        比 1280 只多约 44% 的 token，但小物件与细节的认对率明显更高。
     """
     from PIL import Image, ImageOps
 
@@ -3980,7 +4109,10 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 # 设 0 则走贪心解码，同一批图两次跑结果完全一致。
                 "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "seed": ("INT", {"default": 42, "min": 0, "max": 0xFFFFFFFF}),
-                "max_image_side": ("INT", {"default": 1280, "min": 0, "max": 4096, "step": 128}),
+                # 视觉 token 数 = (w/32)*(h/32)。1280 -> 1536 只多约 44% 的图片
+                # token（实测 prefill 1.0s -> 1.5s），但小物件和细节的认对率明显
+                # 更高。时间/显存紧就往下调；设 0 = 不缩，直接送原图。
+                "max_image_side": ("INT", {"default": 1536, "min": 0, "max": 4096, "step": 128}),
                 "limit": ("INT", {"default": 0, "min": 0, "max": 1000000, "step": 1}),
                 "dry_run": ("BOOLEAN", {"default": False}),
                 "keep_model_loaded": ("BOOLEAN", {"default": False}),
@@ -4040,6 +4172,21 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                                "两份都被改过则各改各的；"
                                "zh_to_en=中文被改过时无条件以中文为准（覆盖英文的改动）；"
                                "off=两份各判各的（旧行为）。",
+                }),
+                # 一轮带图自检。实测（见 devtools/diagnose_recognition.py）：
+                # 能把细节类错误改对（嘴张着还是闭着、画面切到哪、配饰在左还是右），
+                # 而且不动已经写对的句子。再跑第二轮就会来回震荡，所以只给一轮 ——
+                # 没有客观的停止信号，迭代就没有收敛点。
+                # 成本实测 **×5~6**，不是 ×2 —— 自检要连 CHECKS 清单一起输出，
+                # token 数是正文的 4~5 倍（实测 88 tok/次 -> 464 tok/次，
+                # 整批 5.0s -> 28.3s）。所以它更适合「关键图才开」：
+                # 全量跑之前先用 limit 试一小批，值不值得心里有数再决定。
+                "verify": (list(_VERIFY_MODES), {
+                    "default": "off",
+                    "tooltip": "off = 生成即定稿（旧行为）；"
+                               "once = 生成后再带图核验一轮，只改判错的地方。"
+                               "实测能纠正细节类错误（颜色、左右、张闭、数量），"
+                               "但耗时约 ×5 —— 自检要连逐条核验清单一起输出。",
                 }),
             },
             "hidden": {
@@ -4138,18 +4285,51 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         return text, n_tok, t_pre, t_dec, cut
 
     # ----------------------------------------------------------------
+    # 一轮带图自检
+    # ----------------------------------------------------------------
+    # 两条后端路径都只是「把 _tag_one_image* 再调一次」：system 换成自检提示词、
+    # user 侧换成待核查的描述。不新开推理通道 —— 否则图像预处理、token 记账、
+    # 中断检查、后端分叉全都要维护第二套。
+    def _verify_one_image(self, model, processor, image_path, caption,
+                          max_image_side, max_new_tokens, seed):
+        """transformers 路径的自检。返回 (最终文本, 状态, 生成 token 数)。"""
+        raw, n_tok, _tp, _td, _cut = self._tag_one_image(
+            model, processor, image_path,
+            _VERIFY_SYSTEM, _compose_verify_user_text(caption),
+            max_image_side, max_new_tokens,
+            0.1,        # 核查是判断题，要稳：温度压到 0.1
+            False,      # 自检永远不开思考块 —— 思考会挤掉 CHECKS 的输出预算
+            seed, "raw",  # raw：不能被 _normalize_tag_text 当成标签串规整
+            0,
+        )
+        fixed, status = _extract_corrected(raw, caption)
+        return fixed, status, n_tok
+
+    def _verify_one_image_gguf(self, server, image_path, caption,
+                               max_image_side, max_new_tokens, seed):
+        """GGUF 路径的自检。返回 (最终文本, 状态, 生成 token 数)。"""
+        raw, n_tok, _tp, _td, _cut = self._tag_one_image_gguf(
+            server, image_path,
+            _VERIFY_SYSTEM, _compose_verify_user_text(caption),
+            max_image_side, max_new_tokens,
+            0.1, False, seed, "raw", 0,
+        )
+        fixed, status = _extract_corrected(raw, caption)
+        return fixed, status, n_tok
+
+    # ----------------------------------------------------------------
     def tag_folder(self, model_name, folder_path, system_preset, system_prompt,
                    user_prompt=DEFAULT_TAGGER_USER_PROMPT, quantization="none",
                    attention="auto", enable_thinking=False, recursive=False,
                    overwrite="skip", image_exts=",".join(_IMAGE_EXTS_DEFAULT),
                    output_suffix="", output_encoding="utf-8",
                    output_format="tags_one_line", max_new_tokens=256,
-                   temperature=0.2, seed=42, max_image_side=1280, limit=0,
+                   temperature=0.2, seed=42, max_image_side=1536, limit=0,
                    dry_run=False, keep_model_loaded=False, unload_other_models=True,
                    custom_model_path="", show_progress=True, progress_interval=2.0,
                    bilingual="off", max_output_chars=0, caption_mode="off",
                    desc_length="preset", desc_words="", bilingual_sync="auto",
-                   backend=None, unique_id=None):
+                   verify="off", backend=None, unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
             node_id=unique_id, enabled=show_progress, interval=progress_interval
@@ -4272,6 +4452,9 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"  描述语言    : {run_desc}",
             f"  输出格式    : "
             + "、".join(f"{_lang_word(r.get('lang'))}={r['format']}" for r in runs),
+            f"  一轮自检    : "
+            + ("开 —— 生成后再带图核验一轮，只改判错的部分（每张多一次推理）"
+               if str(verify) == "once" else "关 —— 生成即定稿"),
             f"  扫描到      : {scanned} 张（扩展名 {'/'.join(exts)}，"
             f"{'含子目录' if recursive else '仅当前目录'}）",
             f"  待处理      : {len(todo)} 张 / {n_jobs} 次生成"
@@ -4418,6 +4601,7 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         tok_sum = tag_sum = 0
         n_cut = 0                           # 被字符上限截断的条数
         n_bak = 0                           # 新写出的 .orig 备份数
+        n_ver = n_vfix = n_vbad = 0         # 自检：跑了几次 / 改动了几条 / 几次未生效
         t_tag_total = 0.0
         first_prefill = None
         failures, examples = [], []
@@ -4480,6 +4664,48 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                         raise RuntimeError(
                             "输出为空（可能整段都是思考块，或第一个 token 就是 EOS）"
                         )
+
+                    # ---- 一轮带图自检 ----
+                    # 把图与刚写好的描述一起送回去逐条核验。**只跑一轮，不做迭代** ——
+                    # 实测第二轮会来回震荡（见 _VERIFY_SYSTEM 上面的说明）。
+                    # 修正稿不合格时 _extract_corrected 会退回原稿，所以这一步只可能
+                    # 「改对」或「不动」，不可能把结果改坏。
+                    # 预算给得比正文宽：自检要连 CHECKS 清单一起输出，实测 350~400
+                    # token 起步，正文越长清单越长。这里是上限不是配额，写够了就停。
+                    if verify == "once":
+                        n_ver += 1
+                        v_budget = max(1536, int(max_new_tokens_eff) * 3)
+                        try:
+                            if gserver is not None:
+                                text, v_st, v_tok = self._verify_one_image_gguf(
+                                    gserver, src, text, int(max_image_side),
+                                    v_budget, int(seed) + idx,
+                                )
+                            else:
+                                text, v_st, v_tok = self._verify_one_image(
+                                    model, processor, src, text, int(max_image_side),
+                                    v_budget, int(seed) + idx,
+                                )
+                            tok_sum += v_tok
+                            if v_st == "fixed":
+                                n_vfix += 1
+                                logger.info(f"[Qwen35] [自检修正] {label}")
+                            elif v_st in ("no_mark", "empty", "bad_len"):
+                                n_vbad += 1
+                                logger.debug(
+                                    f"[Qwen35] 自检未生效（{v_st}），保留原稿：{label}"
+                                )
+                        except BaseException as e:
+                            # 自检这一步失败不能毁掉已经生成好的正文 —— 那才是主产物。
+                            # 中断/取消仍然要往外抛，否则用户点了取消还在后台跑。
+                            if _is_comfy_interrupt(e) or isinstance(
+                                    e, (KeyboardInterrupt, SystemExit)):
+                                raise
+                            n_vbad += 1
+                            logger.warning(
+                                f"[Qwen35] 自检这一步失败，保留原稿：{label} -> {e}"
+                            )
+
                     if refine:
                         # 优化已有打标：先备份原稿（只留第一次那份），再原子覆盖，
                         # 最后把输出指纹记进 .q35state —— 下次靠它判断「内容有没有变」。
@@ -4567,6 +4793,11 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 f"  {tag_word}合计    : {tag_sum} 个（平均 {tag_sum / ok:.1f} 个/次）"
             )
             lines.append(f"  输出 token  : {tok_sum}（平均 {tok_sum / ok:.1f} tok/次）")
+        if n_ver:
+            lines.append(
+                f"  一轮自检    : 跑了 {n_ver} 次，{n_vfix} 条被修正"
+                + (f"，{n_vbad} 次未生效（已保留原稿）" if n_vbad else "")
+            )
         if n_cut:
             lines.append(
                 f"  按上限截断  : {n_cut} 条"

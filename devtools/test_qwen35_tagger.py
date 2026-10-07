@@ -324,7 +324,7 @@ print("  widgets 顺序:")
 for _i, _k in enumerate(order):
     print(f"    [{_i:>2}] {_k}")
 print(f"  连线输入（不占 widget 位）: {_line_inputs}")
-check("widgets 总数 = 31（backend 是连线输入，不计数）", len(order) == 31, str(len(order)))
+check("widgets 总数 = 32（backend 是连线输入，不计数）", len(order) == 32, str(len(order)))
 check("连线输入只有 backend", _line_inputs == ["backend"], str(_line_inputs))
 check("backend 是可选输入，类型 QWEN35_BACKEND",
       it["optional"].get("backend") == ("QWEN35_BACKEND",),
@@ -336,8 +336,8 @@ sig = [p for p in inspect.signature(NODE.tag_folder).parameters.keys()
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
 check("新增控件**一律追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
-      order[-5:] == ["max_output_chars", "caption_mode", "desc_length",
-                     "desc_words", "bilingual_sync"], str(order[-5:]))
+      order[-6:] == ["max_output_chars", "caption_mode", "desc_length",
+                     "desc_words", "bilingual_sync", "verify"], str(order[-6:]))
 
 check("folder_path 不是多行框（路径不该用多行输入）",
       it["required"]["folder_path"][1].get("multiline") is False)
@@ -459,11 +459,14 @@ class FakeModel:
     device = torch.device("cpu")
     generation_config = FakeGenCfg()
 
-    def __init__(self, fail_at=(), interrupt_at=(), empty_at=(), raw_reply=None):
+    def __init__(self, fail_at=(), interrupt_at=(), empty_at=(), raw_reply=None,
+                 reply_at=None):
         self.fail_at = set(fail_at)
         self.interrupt_at = set(interrupt_at)
         self.empty_at = set(empty_at)
         self.raw_reply = raw_reply
+        # {第几次调用: 回复文本}。自检是「同一张图连调两次」，要能分别指定两次的回复。
+        self.reply_at = dict(reply_at or {})
         self.n = 0
         self.proc = None
         self.gen_kwargs = []
@@ -479,7 +482,9 @@ class FakeModel:
             crit[0](input_ids=None)          # 第二次调用就会抛 InterruptProcessingException
         if self.n in self.fail_at:
             raise ValueError("假失败：这一张读不出来")
-        if self.n in self.empty_at:
+        if self.n in self.reply_at:
+            self.proc.reply_text = self.reply_at[self.n]
+        elif self.n in self.empty_at:
             self.proc.reply_text = ""
         elif self.raw_reply is not None:
             self.proc.reply_text = self.raw_reply
@@ -2436,6 +2441,166 @@ check("M7e 执行时现读源文件，不缓存规划阶段的旧内容",
       '_read_text_tolerant(job["src_tgt"]' in _msrc)
 check("M7f 源读不出来时明确报错而不是把空内容翻过去",
       "同步源读不出内容" in _msrc)
+
+# ===========================================================================
+section("N) 一轮带图自检（verify）+ 输入保真度")
+# ===========================================================================
+
+# ---- N1 自检提示词：三条设计要点必须都在 ----
+_check_src = QM._VERIFY_SYSTEM
+check("N1a 要求逐条列出可核查的断言，并逐条判定（泛泛问「写得对不对」会被自洽偏差带跑）",
+      "claim by claim" in _check_src and "SUPPORTED" in _check_src
+      and "CONTRADICTED" in _check_src and "UNCLEAR" in _check_src)
+check("N1b 每条都要写「图里实际是什么」（逼它重新看图，而不是复述自己的文字）",
+      "Always write what the image actually shows" in _check_src)
+check("N1c 只改判错的部分、明确禁止顺手润色与重写",
+      "Change ONLY the claims that were CONTRADICTED" in _check_src
+      and "Do NOT re-describe the image from scratch" in _check_src)
+check("N1d 输出里带可解析的 CORRECTED 段", "CORRECTED:" in _check_src)
+
+# ---- N2 档位与守卫常量 ----
+check("N2a 只有 off / once 两档（刻意不做多轮迭代：第二轮会来回震荡）",
+      QM._VERIFY_MODES == ("off", "once"), str(QM._VERIFY_MODES))
+check("N2b 长度守卫区间 = [0.4, 2.5]（实测正常修正的变化在 ±30% 以内）",
+      QM._VERIFY_LEN_LO == 0.4 and QM._VERIFY_LEN_HI == 2.5,
+      f"{QM._VERIFY_LEN_LO}, {QM._VERIFY_LEN_HI}")
+
+# ---- N3 user 侧文本拼装 ----
+_vu = QM._compose_verify_user_text("  a cat  ")
+check("N3a user 侧文本 = 一行标签 + 去掉首尾空白的待核查描述",
+      _vu == QM._VERIFY_LABEL + "\n" + "a cat", repr(_vu))
+check("N3b 标签用英文（与英文自检指令同语种，否则模型会中途换语言写）",
+      QM._VERIFY_LABEL == "CAPTION TO CHECK:", QM._VERIFY_LABEL)
+
+# ---- N4 _extract_corrected：各分支（这是唯一决定是否采用修正稿的地方）----
+_ORIG = "A woman with silver hair and green eyes sits by a window."
+_EDGE = _ORIG + " Her hands rest on the sill."      # 约 1.4 倍，守卫区间内
+_OK = ("CHECKS:\n"
+       "- silver hair -> SUPPORTED: the hair is light silver\n"
+       "- mouth open -> CONTRADICTED: the mouth is closed\n"
+       "\nCORRECTED:\n" + _EDGE)
+
+_t, _s = QM._extract_corrected(_OK, _ORIG)
+check("N4a 正常输出：取 CORRECTED 段作为最终文本",
+      _s == "fixed" and _t == _EDGE, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected("CHECKS:\n- a -> SUPPORTED: yes\n", _ORIG)
+check("N4b 没有 CORRECTED 标记 -> no_mark，原稿原样返回",
+      _s == "no_mark" and _t == _ORIG, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected("CHECKS:\n- a -> SUPPORTED\n\nCORRECTED:\n\n", _ORIG)
+check("N4c CORRECTED 段是空的 -> empty，原稿原样返回",
+      _s == "empty" and _t == _ORIG, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected("CORRECTED:\nx", _ORIG)
+check("N4d 修正稿短得离谱 -> bad_len 并回退（疑似把 CHECKS 段当正文）",
+      _s == "bad_len" and _t == _ORIG, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected("CORRECTED:\n" + ("word " * 200), _ORIG)
+check("N4e 修正稿长得离谱 -> bad_len 并回退（疑似干脆重写了一篇）",
+      _s == "bad_len" and _t == _ORIG, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected("CORRECTED:\n" + _ORIG, _ORIG)
+check("N4f 修正稿与原稿逐字一致 -> same（本来就没查出错），结果仍是原稿",
+      _s == "same" and _t == _ORIG, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected(_OK, "")
+check("N4g 原稿本身是空的 -> skipped，不会把修正稿写进一个本该空着的位置",
+      _s == "skipped" and _t == "", f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected(
+    "Notice that the CORRECTED: block comes last.\n\nCORRECTED:\n" + _EDGE, _ORIG)
+check("N4h 只认独占行首的 CORRECTED:，正文里顺嘴提到它不算标记",
+      _s == "fixed" and _t == _EDGE, f"{_s} / {_t!r}")
+
+_t, _s = QM._extract_corrected("CORRECTED:\n```\n" + _EDGE + "\n```\n", _ORIG)
+check("N4i 修正段被 markdown 围栏包住也能剥干净",
+      _s == "fixed" and _t == _EDGE, f"{_s} / {_t!r}")
+
+# 边界：长度接近守卫上限但仍在内要放行（防止守卫写紧一格误杀正常修正）
+_t, _s = QM._extract_corrected(
+    "CORRECTED:\n" + _ORIG
+    + " The window behind her shows a busy street with people walking past.",
+    _ORIG)
+check("N4j 长度接近上限但仍在内 -> 放行（守卫不能紧到误杀正常修正）",
+      _s == "fixed", f"{_s} ratio={len(_t) / len(_ORIG):.2f}")
+
+# ---- N5 端到端：verify=once 用修正稿覆盖正文 ----
+_N_REPLY = ("CHECKS:\n"
+            "- 1girl -> SUPPORTED: one character is present\n"
+            "- blue_eyes -> CONTRADICTED: the eyes are green\n"
+            "\nCORRECTED:\n"
+            "1girl, solo, long_hair, green_eyes, closed_mouth")
+_N_FIXED = "1girl, solo, long_hair, green_eyes, closed_mouth"
+D_N5 = os.path.join(TMP_ROOT, "n5")
+_paths5 = make_set(D_N5, 1)
+h5 = Harness(reply_at={2: _N_REPLY})       # 第 1 次给正文，第 2 次给自检输出
+try:
+    res5 = h5.run(D_N5, verify="once")
+    got5 = open(QM._txt_path_for(_paths5[0]), encoding="utf-8").read()
+    check("N5a verify=once：一张图跑两次推理（正文 + 自检）",
+          h5.model.n == 2, str(h5.model.n))
+    check("N5b 写盘的是自检修正后的文本，不是第一次的正文",
+          got5 == _N_FIXED, got5)
+    check("N5c 报告里有自检配置行与统计行",
+          "一轮自检    : 开" in res5["result"][0]
+          and "1 条被修正" in res5["result"][0],
+          [l for l in res5["result"][0].splitlines() if "自检" in l])
+finally:
+    h5.close()
+
+# ---- N6 端到端：自检没按格式输出 -> 保留正文，绝不写坏 ----
+D_N6 = os.path.join(TMP_ROOT, "n6")
+_paths6 = make_set(D_N6, 1)
+h6 = Harness()                              # 两次都返回 GOOD，里面没有 CORRECTED
+try:
+    res6 = h6.run(D_N6, verify="once")
+    got6 = open(QM._txt_path_for(_paths6[0]), encoding="utf-8").read()
+    check("N6a 自检没按格式来 -> 保留原正文（这一步只可能改对或不动）",
+          got6 == CLEAN_EXPECT, got6)
+    check("N6b 报告把这种情况统计成「未生效」",
+          "未生效" in res6["result"][0],
+          [l for l in res6["result"][0].splitlines() if "自检" in l])
+finally:
+    h6.close()
+
+# ---- N7 端到端：verify=off 是默认，绝不多跑一次 ----
+D_N7 = os.path.join(TMP_ROOT, "n7")
+make_set(D_N7, 1)
+h7 = Harness()
+try:
+    res7 = h7.run(D_N7)
+    check("N7a verify=off（默认）：一张图只跑一次推理（旧行为一字未改）",
+          h7.model.n == 1, str(h7.model.n))
+    check("N7b 报告写明自检是关的", "一轮自检    : 关" in res7["result"][0],
+          [l for l in res7["result"][0].splitlines() if "自检" in l])
+finally:
+    h7.close()
+
+# ---- N8 输入保真度：缩图后输出 PNG（无损）----
+_mN8, _bN8 = GBm.encode_image_file(_kimg, 256)
+check("N8a 缩图后输出 PNG —— 无损编码是免费的（视觉 token 只由尺寸决定）",
+      _mN8 == "image/png", _mN8)
+check("N8b 缩放本身仍生效（体积比原图小）",
+      len(_bN8) < os.path.getsize(_kimg), f"{os.path.getsize(_kimg)} -> {len(_bN8)}")
+_mN8b, _bN8b = GBm.encode_image_file(_kimg, 256, lossless=False)
+check("N8c lossless=False 仍可退回到 JPEG（留给需要极小请求体的场合）",
+      _mN8b == "image/jpeg", _mN8b)
+
+# ---- N9 控件默认值与顺序 ----
+check("N9a verify 默认 off（不改变旧工作流行为）",
+      _all["verify"][1]["default"] == "off",
+      str(_all["verify"][1]["default"]))
+check("N9b verify 只有 off / once 两档",
+      list(_all["verify"][0]) == ["off", "once"],
+      str(_all["verify"][0]))
+check("N9c max_image_side 默认抬到 1536（保真度：1280 会把细节压掉）",
+      _all["max_image_side"][1]["default"] == 1536,
+      str(_all["max_image_side"][1]["default"]))
+check("N9d 两个节点的签名默认值也跟着抬（直接调函数时行为一致）",
+      inspect.signature(NODE.tag_folder).parameters["max_image_side"].default == 1536
+      and inspect.signature(NODE.enhance).parameters["max_image_side"].default == 1536,
+      str(inspect.signature(NODE.enhance).parameters["max_image_side"].default))
 
 # ---- 收尾 ----
 print()

@@ -917,11 +917,20 @@ def mime_for_name(name):
     return "image/png"
 
 
-def encode_image_file(path, max_side=0, quality=92):
+def encode_image_file(path, max_side=0, quality=92, lossless=True):
     """读图片文件 -> (mime, bytes)。max_side>0 时先等比缩到长边不超过它。
 
     缩放用 PIL，因为 llama.cpp 的视觉塔会按固定 patch 切块：原图太大时视觉 token
     数暴涨，prefill 时间跟着涨，而打标根本不需要那么高的分辨率。
+
+    **缩完之后存 PNG，不存 JPEG**（lossless=True，默认）。理由是无损编码在这儿
+    是免费的：视觉 token 数只由尺寸决定（(w/32)*(h/32)，16px patch + 2×2 merge），
+    跟用什么格式编码无关。早先这里写的是 JPEG q92，实测把一张 2620KB 的 PNG
+    压到 274KB —— 差 10 倍，睫毛、发丝、细小配饰这类细节全糊在这一步。
+    而模型「认错东西」多半就错在这类细节上，等于白送一个错误来源。
+    代价只有请求体变大（本地回环，无所谓）。
+
+    quality 只在 lossless=False 时有意义，留给确实需要极小请求体的场合。
     """
     mime = mime_for_name(path)
     with open(path, "rb") as fh:
@@ -943,6 +952,9 @@ def encode_image_file(path, max_side=0, quality=92):
             im = im.convert("RGB") if im.mode not in ("RGB", "L") else im
             im = im.resize((nw, nh), Image.LANCZOS)
             buf = io.BytesIO()
+            if lossless:
+                im.save(buf, format="PNG", optimize=True)
+                return ("image/png", buf.getvalue())
             im.save(buf, format="JPEG", quality=int(quality))
             return ("image/jpeg", buf.getvalue())
     except Exception:
