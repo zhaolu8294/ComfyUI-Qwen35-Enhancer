@@ -59,7 +59,9 @@
         2.0,
         "off",
         0,
-        "off"
+        "off",
+        "preset",
+        ""
       ],
       "properties": {
         "Node name for S&R": "Qwen35BatchImageTagger"

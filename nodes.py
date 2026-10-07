@@ -3196,6 +3196,150 @@ def _truncate_output(text, max_chars):
     return (out or head.strip()), True
 
 
+# ---------------------------------------------------------------------------
+# 描述长度档位
+#
+# 输出短不是 max_new_tokens 卡住的（那个默认 256，从来没被顶到过）——
+# 是六套内置预设的系统提示词里都写着「1~3 sentences / 30~80 words」
+# （中文版「1~3 句 / 30~80 字」），模型严格照办。
+#
+# 所以想让描述变长变短，改的必须是那句长度条款本身。这里做成节点上的一个
+# 下拉：preset = 一个字都不动（默认，行为与以前完全一致），其余档位在送进
+# 模型之前把那句话里的数字换掉 —— 句式、连接词、标点、语种全部原样保留，
+# 所以中英预设各自还是自己那套写法，标签串风格的 custom 提示词也不会被破坏。
+#
+# 唯独 custom 提示词里**找不到**长度条款时（例如默认那份 danbooru 标签
+# 提示词，它只有 "Aim for 10~30 tags"），退化成在末尾追加一条覆盖指令 ——
+# 报告里会明说，免得用户以为档位没生效。
+# ---------------------------------------------------------------------------
+_DESC_LENGTH_TABLE = {
+    #              句数下限, 句数上限, 字数下限, 字数上限
+    "short":       (1,  2,   15,  40),
+    "medium":      (2,  4,   50, 100),
+    "long":        (4,  8,  120, 250),
+    "extra_long":  (8, 15,  250, 450),
+}
+
+_DESC_LENGTH_CHOICES = ["preset"] + list(_DESC_LENGTH_TABLE) + ["custom"]
+
+# 句数 -> 字数的换算：每句按 30~45 字/词算。用 custom 档时靠它把用户填的
+# 字数区间反推成一个句数区间（不推的话「1~3 句 / 250 字」会挤成一坨）。
+_DESC_WORDS_PER_SENT_MIN = 45.0        # 推句数下限：一句能装多少
+_DESC_WORDS_PER_SENT_MAX = 30.0        # 推句数上限：一句至少多少
+
+# 长度条款的两种写法，以及 refine 指令里的变体：
+#   en 预设 : "1~3 sentences, roughly 30~80 words"
+#   en refine: "1~3 plain sentences, about 30~80 words"
+#   zh 预设 : "1~3 句，30~80 字"
+# 四个数字捕获、三段文字捕获（u1 含 "sentences"/"句"，u3 含 "words"/"字"），
+# 替换时只动数字、文字原样拼回，于是语种与句式都不会串。
+# 中间的连接词不允许出现换行 / 中文句号 / 英文句点 / 数字，避免跨句误匹配。
+_DESC_LEN_RE = re.compile(
+    r"(?P<n1>\d+)\s*[~～\-—－]\s*(?P<n2>\d+)"
+    r"(?P<u1>[^\n。.\d]{0,24}?(?:sentences?|句))"
+    r"(?P<u2>[^\n。.\d]{0,24}?)"
+    r"(?P<n3>\d+)\s*[~～\-—－]\s*(?P<n4>\d+)"
+    r"(?P<u3>\s*(?:words?|字|词))",
+    re.IGNORECASE,
+)
+
+# custom 档的字数区间写法：60~150 / 60-150 / 60 到 150 / 60,150 都认
+_DESC_RANGE_RE = re.compile(r"^\s*(\d+)\s*[~～\-—－至到,，/]\s*(\d+)\s*$")
+
+
+def _parse_word_range(spec):
+    """解析 custom 档填的字数区间。解析不出返回 None。"""
+    m = _DESC_RANGE_RE.match(str(spec or ""))
+    if not m:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    if a <= 0 and b <= 0:
+        return None
+    if b < a:
+        a, b = b, a
+    return a, b
+
+
+def _sentences_for_words(w1, w2):
+    """按字数推一个合理的句数区间。
+
+    上限至少比下限大 1 —— 「1~1 句」这种区间模型会无所适从。
+    （校验：30~80 -> 1~3 句，正是预设原文那个区间。）
+    """
+    s1 = max(1, int(round(w1 / _DESC_WORDS_PER_SENT_MIN)))
+    s2 = max(s1 + 1, int(round(w2 / _DESC_WORDS_PER_SENT_MAX)))
+    return s1, s2
+
+
+def _resolve_desc_length(level, words):
+    """把下拉档位 + 自定义字数解析成 (句数下限, 句数上限, 字数下限, 字数上限)。
+
+    返回 None 表示「不动预设原文」—— preset 档，或 custom 档填的东西解析不出来。
+    """
+    key = str(level or "preset").strip().lower()
+    if not key or key == "preset":
+        return None
+    if key in _DESC_LENGTH_TABLE:
+        return _DESC_LENGTH_TABLE[key]
+    if key == "custom":
+        got = _parse_word_range(words)
+        if got is None:
+            return None
+        return _sentences_for_words(*got) + got
+    return None
+
+
+def _desc_length_desc(spec):
+    """给报告用的说明，例如 "4~8 句 / 120~250 字"。"""
+    if spec is None:
+        return "跟随预设原文"
+    s1, s2, w1, w2 = spec
+    return f"{s1}~{s2} 句 / {w1}~{w2} 字"
+
+
+def _tokens_for_words(w2, lang):
+    """估算写完 w2 个字/词要多少 token，给 max_new_tokens 兜底。
+
+    中文大致 1 字 1 token、英文 1 词约 1.6 token，再留 64 余量。
+    宁可多给 —— 这里只做一件事：别让用户主动选的长档被 token 上限硬截断。
+    """
+    ratio = 1.6 if str(lang or "").strip().lower() != "zh" else 1.15
+    return int(w2 * ratio) + 64
+
+
+def _apply_desc_length(text, spec, lang):
+    """给一段提示词套用长度档位。返回 (新文本, 处理方式)。
+
+    处理方式：
+      "keep"      = spec 为空，原样返回
+      "rewrite"   = 改掉了原文里那句长度条款（保留句式与语种）
+      "append"    = 原文里没有长度条款，末尾追加一条覆盖指令
+    """
+    src = str(text or "")
+    if spec is None or not src.strip():
+        return text, "keep"
+    s1, s2, w1, w2 = spec
+    hit = False
+
+    def _sub(m):
+        nonlocal hit
+        hit = True
+        return (f"{s1}~{s2}{m.group('u1')}{m.group('u2')}"
+                f"{w1}~{w2}{m.group('u3')}")
+
+    out = _DESC_LEN_RE.sub(_sub, src)
+    if hit:
+        return out, "rewrite"
+    if str(lang or "").strip().lower() == "zh":
+        extra = (f"\n- 长度：写 {s1}~{s2} 句白话，约 {w1}~{w2} 字；"
+                 f"此条覆盖上面出现的任何长度限制。")
+    else:
+        extra = (f"\n- LENGTH: write {s1}~{s2} sentences of plain prose, "
+                 f"roughly {w1}~{w2} words. "
+                 f"This overrides any length limit stated above.")
+    return src.rstrip() + "\n" + extra, "append"
+
+
 _IMAGE_EXTS_DEFAULT = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 _TAG_ENCODINGS = ("utf-8", "utf-8-sig", "gbk", "utf-16")
 
@@ -3658,6 +3802,24 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                 # overwrite=overwrite 可无视指纹强制重做。
                 # 同样追加在末尾，避免旧工作流 widgets_values 串位。
                 "caption_mode": (["off", "refine", "refine_or_new"], {"default": "off"}),
+                # 描述长度档位：六套预设的系统提示词里都硬写着「1~3 句 / 30~80 字」，
+                # 模型严格照办 —— 所以输出短是**提示词**规定的，不是 max_new_tokens
+                # 卡住的（那个默认 256，从来没被顶到过）。
+                #   preset = 一个字都不动（默认，行为与以前完全一致）
+                #   short / medium / long / extra_long = 覆盖成对应档位
+                #   custom = 用下面 desc_words 填的区间
+                # 同样追加在末尾，避免旧工作流 widgets_values 串位。
+                "desc_length": (_DESC_LENGTH_CHOICES, {
+                    "default": "preset",
+                    "tooltip": "描述长短。preset=跟随预设原文（1~3 句 / 30~80 字）；"
+                               "其余档位覆盖预设里那句长度条款，句式与语种不变；"
+                               "custom=用 desc_words 填的区间。",
+                }),
+                "desc_words": ("STRING", {
+                    "default": "",
+                    "tooltip": "仅 desc_length=custom 时生效。填字数区间，"
+                               "例如 60~150（英文按 words 计，中文按字计）。",
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3765,6 +3927,7 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                    dry_run=False, keep_model_loaded=False, unload_other_models=True,
                    custom_model_path="", show_progress=True, progress_interval=2.0,
                    bilingual="off", max_output_chars=0, caption_mode="off",
+                   desc_length="preset", desc_words="",
                    backend=None, unique_id=None):
         t_start = time.perf_counter()
         pbar = _ProgressReporter(
@@ -3778,8 +3941,34 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         runs, bl_note = _tag_runs(
             preset_used, record, str(bilingual) == "en_then_zh"
         )
-        # 格式也由预设决定（用户选「预设自动决定」）：custom 才回落到 output_format 控件
+        # ---- 描述长度档位 ----
+        # preset 档一个字都不动；其余档把系统提示词里那句长度条款的数字换掉。
+        # **必须在算 cfg 指纹之前** —— 指纹里有 prompt 的哈希，换了档位就该重做
+        # 一遍，不能因为「txt 内容没变」被跳过。
+        len_spec = _resolve_desc_length(desc_length, desc_words)
+        len_level = str(desc_length or "preset").strip().lower()
+        len_hows = set()
+        len_bad = None
+        if len_level == "custom" and len_spec is None:
+            len_bad = (f"desc_length=custom 但 desc_words='{desc_words}' 解析不出来"
+                       f"（要写成 60~150 这样的区间）→ 本次按 preset 处理，一个字没改")
+        # 长档位的描述在默认 256 个 token 里根本写不完，会被硬截断 ——
+        # 用户主动选了长档就是想要长描述，这里按需抬上限（报告里会写明）。
+        max_tokens_user = int(max_new_tokens)
+        max_new_tokens_eff = max_tokens_user
         for r in runs:
+            if len_spec is not None:
+                r["prompt"], _how = _apply_desc_length(
+                    r.get("prompt"), len_spec, r.get("lang"))
+                len_hows.add(_how)
+                # 校订指令里也有同一句长度条款（"Make it read as 1~3 ... sentences"），
+                # 一起改掉，否则 refine 模式会把长描述又压回去。
+                r["refine"], _ = _apply_desc_length(
+                    r.get("refine"), len_spec, r.get("lang"))
+                need = _tokens_for_words(len_spec[3], r.get("lang"))
+                if need > max_new_tokens_eff:
+                    max_new_tokens_eff = need
+            # 格式也由预设决定（用户选「预设自动决定」）：custom 才回落到 output_format 控件
             if not r.get("format"):
                 r["format"] = str(output_format)
             # 配置指纹：内容没变但换了预设 / 语言 / 上限，也该重做一次，
@@ -3860,6 +4049,18 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             "refine_or_new": "优化已有打标 + 无初稿的从零补写",
         }.get(mode, f"优化已有打标（{mode}）")
 
+        # 描述长度那行的措辞：默认档明说「没动」，改写与追加分开写 ——
+        # 两者对模型的效果差别很大，混在一起看不出来会白排查半天。
+        if len_spec is None:
+            len_line = ("  描述长度    : 跟随预设原文"
+                        + ("（desc_length=custom 解析失败，已退回 preset）"
+                           if len_bad else "（desc_length=preset）"))
+        else:
+            _how_txt = ("已改写提示词里的长度条款" if "rewrite" in len_hows
+                        else "提示词里没有长度条款，已在末尾追加覆盖指令")
+            len_line = (f"  描述长度    : {_desc_length_desc(len_spec)}"
+                        f"（desc_length={len_level}，{_how_txt}）")
+
         head = [
             "[Qwen35] ========== 批量打标 ==========",
             f"  文件夹      : {folder}",
@@ -3870,6 +4071,7 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"  系统提示词  : {preset_used}"
             + (f"（预设：{preset_label}）" if preset_used != "custom"
                else "（custom，取节点上填写的文本）"),
+            len_line,
             f"  描述语言    : {run_desc}",
             f"  输出格式    : "
             + "、".join(f"{_lang_word(r.get('lang'))}={r['format']}" for r in runs),
@@ -3898,6 +4100,19 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         )
         if bl_note:
             head.append(f"  ⓘ {bl_note}")
+        if max_new_tokens_eff != max_tokens_user:
+            head.append(
+                f"  ⓘ max_new_tokens 由 {max_tokens_user} 自动抬到 {max_new_tokens_eff}"
+                f" —— {_desc_length_desc(len_spec)} 在 {max_tokens_user} 个 token 里写不完"
+            )
+        if len_bad:
+            head.append(f"  ⓘ {len_bad}")
+        if len_spec is not None and int(max_output_chars) > 0 \
+                and int(max_output_chars) < len_spec[2]:
+            head.append(
+                f"  ⓘ max_output_chars={int(max_output_chars)} 比长度档位的下限"
+                f"（{len_spec[2]} 字）还小 —— 输出会被截短。想写长就把它设成 0"
+            )
         if int(limit) > 0:
             head.append(f"  ⓘ limit={int(limit)}：只取扫描结果里的前 {int(limit)} 张")
 
@@ -3982,7 +4197,8 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         pbar.message(
             f"开始打标：{len(todo)} 张 / {n_jobs} 次生成，温度 {float(temperature):.2f}"
             + ("（贪心解码，同一批两次跑结果一致）" if float(temperature) <= 0 else "")
-            + (f"；输出上限 {int(max_output_chars)} 字符" if int(max_output_chars) > 0 else "")
+            + f"；生成上限 {max_new_tokens_eff} tok"
+            + (f"；字符上限 {int(max_output_chars)}" if int(max_output_chars) > 0 else "")
             + (f"；优化已有打标：{n_draft} 次带初稿"
                + (f"、{n_blank} 次从零补写" if n_blank else "") if refine else "")
         )
@@ -4018,14 +4234,14 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
                         # 返回值形状与下面那条完全一致，后续记账一行都不用分叉。
                         text, n_tok, t_pre, t_dec, cut = self._tag_one_image_gguf(
                             gserver, src, r["prompt"], u_prompt,
-                            int(max_image_side), int(max_new_tokens),
+                            int(max_image_side), max_new_tokens_eff,
                             float(temperature), bool(enable_thinking),
                             int(seed) + idx, r["format"], int(max_output_chars),
                         )
                     else:
                         text, n_tok, t_pre, t_dec, cut = self._tag_one_image(
                             model, processor, src, r["prompt"], u_prompt,
-                            int(max_image_side), int(max_new_tokens), float(temperature),
+                            int(max_image_side), max_new_tokens_eff, float(temperature),
                             bool(enable_thinking), int(seed) + idx, r["format"],
                             int(max_output_chars),
                         )

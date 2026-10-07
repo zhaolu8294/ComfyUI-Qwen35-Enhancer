@@ -324,7 +324,7 @@ print("  widgets 顺序:")
 for _i, _k in enumerate(order):
     print(f"    [{_i:>2}] {_k}")
 print(f"  连线输入（不占 widget 位）: {_line_inputs}")
-check("widgets 总数 = 28（backend 是连线输入，不计数）", len(order) == 28, str(len(order)))
+check("widgets 总数 = 30（backend 是连线输入，不计数）", len(order) == 30, str(len(order)))
 check("连线输入只有 backend", _line_inputs == ["backend"], str(_line_inputs))
 check("backend 是可选输入，类型 QWEN35_BACKEND",
       it["optional"].get("backend") == ("QWEN35_BACKEND",),
@@ -335,8 +335,9 @@ sig = [p for p in inspect.signature(NODE.tag_folder).parameters.keys()
        if p not in ("self", "unique_id") and p not in _line_inputs]
 check("签名与 widgets 顺序一致", sig == order,
       f"差异 {set(sig) ^ set(order)}" if sig != order else "")
-check("三个新增控件**追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
-      order[-3:] == ["bilingual", "max_output_chars", "caption_mode"], str(order[-3:]))
+check("新增控件**一律追加在末尾**（否则旧工作流 widgets_values 会整体串位）",
+      order[-5:] == ["bilingual", "max_output_chars", "caption_mode",
+                     "desc_length", "desc_words"], str(order[-5:]))
 
 check("folder_path 不是多行框（路径不该用多行输入）",
       it["required"]["folder_path"][1].get("multiline") is False)
@@ -2004,6 +2005,146 @@ check("K14f auto_download 默认开、model_url 默认空（16GB 不该自动下
       and _kit["optional"]["model_url"][1]["default"] == "")
 
 _fake_srv.shutdown()
+
+
+# ===========================================================================
+section("L) 描述长度档位（改的是提示词里那句长度条款，不是 max_new_tokens）")
+# ===========================================================================
+#
+# 背景：六套预设的系统提示词里都写着「1~3 sentences / 30~80 words」，
+# 模型严格照办 —— 输出短是**提示词**规定的。所以档位必须作用在提示词上，
+# 而且只动数字、句式与语种原样保留（否则中英预设会互相串味）。
+
+check("L1a 档位选项：preset 排第一，四档 + custom 齐全",
+      QM._DESC_LENGTH_CHOICES[0] == "preset"
+      and set(QM._DESC_LENGTH_CHOICES) == {"preset", "short", "medium",
+                                           "long", "extra_long", "custom"},
+      str(QM._DESC_LENGTH_CHOICES))
+check("L1b 每个档位的句数/字数区间都合法（正数、下限 < 上限）",
+      all(0 < a < b and 0 < c < d for a, b, c, d in QM._DESC_LENGTH_TABLE.values()),
+      str(QM._DESC_LENGTH_TABLE))
+_wid = [QM._DESC_LENGTH_TABLE[k][3] for k in ("short", "medium", "long", "extra_long")]
+check("L1c 档位按长度严格递增（short < medium < long < extra_long）",
+      _wid == sorted(_wid) and len(set(_wid)) == 4, str(_wid))
+
+check("L2a preset / 空 / 未知值 -> 一律不动原文（不猜、不报错）",
+      all(QM._resolve_desc_length(v, "") is None
+          for v in ("preset", "PRESET", "", None, "no_such_level")))
+check("L2b 四个内置档位解析成表里的数字，大小写不敏感",
+      QM._resolve_desc_length("long", "") == QM._DESC_LENGTH_TABLE["long"]
+      and QM._resolve_desc_length("LONG", "") == QM._DESC_LENGTH_TABLE["long"])
+
+
+def _words_of(level, spec):
+    r = QM._resolve_desc_length(level, spec)
+    return r[2:] if r else None
+
+
+check("L2c custom 认 60~150 / 60-150 / 60 到 150 / 60,150 四种写法",
+      all(_words_of("custom", s) == (60, 150)
+          for s in ("60~150", "60-150", "60 到 150", "60,150")),
+      str([_words_of("custom", s) for s in ("60~150", "60-150", "60 到 150")]))
+check("L2d custom 上下限写反了会自动摆正",
+      _words_of("custom", "150-60") == (60, 150), str(_words_of("custom", "150-60")))
+check("L2e custom 解析不出来 -> 退回 preset（宁可不改，也不乱改）",
+      all(_words_of("custom", s) is None
+          for s in ("", "80", "abc", "0~0", "-", "150~", "~80")))
+_c30 = QM._resolve_desc_length("custom", "30~80")
+check("L2f 字数 30~80 反推出的句数正好是 1~3（与预设原文一致，换算没跑偏）",
+      _c30 is not None and _c30[:2] == (1, 3), str(_c30))
+check("L2g 反推的句数上限永远至少比下限大 1（不能出现 1~1 句这种区间）",
+      all((lambda sp: sp is not None and sp[1] > sp[0])(
+              QM._resolve_desc_length("custom", s))
+          for s in ("20~25", "300~310", "45~45", "5~6")))
+
+_ps = QM._load_tag_presets()
+check("L3a 六套预设都带 prompt（L 段要在真文本上验，而不是我编的样本）",
+      len(_ps) == 6 and all((v.get("prompt") or "").strip() for v in _ps.values()),
+      str(sorted(_ps)))
+
+# 回归保护：preset 档必须一个字都不动
+check("L3b desc_length=preset 时六套预设全文逐字节不变（旧行为零改动）",
+      all(QM._apply_desc_length(v["prompt"], None, v.get("lang")) == (v["prompt"], "keep")
+          for v in _ps.values()))
+
+_p_en = _ps["photoreal"]["prompt"]
+_o_en, _h_en = QM._apply_desc_length(_p_en, QM._DESC_LENGTH_TABLE["long"], "en")
+check("L3c 英文预设被改写成 4~8 sentences / 120~250 words",
+      _h_en == "rewrite" and "4~8 sentences, roughly 120~250 words" in _o_en
+      and "30~80 words" not in _o_en)
+check("L3d 英文改写**只动了数字**，连接词与标点逐字节不变",
+      _o_en.replace("4~8 sentences, roughly 120~250 words",
+                    "1~3 sentences, roughly 30~80 words") == _p_en)
+
+_p_zh = _ps["photoreal_zh"]["prompt"]
+_o_zh, _h_zh = QM._apply_desc_length(_p_zh, QM._DESC_LENGTH_TABLE["long"], "zh")
+check("L3e 中文预设被改写成 4~8 句 / 120~250 字（单位仍是「字」，没有串成 words）",
+      _h_zh == "rewrite" and "4~8 句，120~250 字" in _o_zh
+      and "words" not in _o_zh.split("硬性要求")[0])
+check("L3f 中文改写**只动了数字**，标点与措辞逐字节不变",
+      _o_zh.replace("4~8 句，120~250 字", "1~3 句，30~80 字") == _p_zh)
+
+_ref = _ps["photoreal"]["refine_prompt"]
+_o_ref, _h_ref = QM._apply_desc_length(
+    _ref, QM._DESC_LENGTH_TABLE["extra_long"], "en")
+check("L3g refine 指令里那句长度条款也一起改掉（否则长描述会被校订阶段压回短的）",
+      _h_ref == "rewrite" and "8~15 plain sentences, about 250~450 words" in _o_ref,
+      [l for l in _o_ref.split("\n") if "sentences" in l][:1])
+check("L3h 六套预设的 refine_prompt 全都能命中改写（没有哪套漏改）",
+      all(QM._apply_desc_length(v.get("refine_prompt") or "", _c30, v.get("lang"))[1] == "rewrite"
+          for v in _ps.values() if (v.get("refine_prompt") or "").strip()))
+
+# 提示词里没有长度条款时：追加覆盖指令，而不是静默失效
+_bare = "You are an image tagging model. Aim for 10~30 tags."
+_o_a, _h_a = QM._apply_desc_length(_bare, QM._DESC_LENGTH_TABLE["long"], "en")
+check("L4a 找不到长度条款 -> 末尾追加覆盖指令（静默失效是最糟的结果）",
+      _h_a == "append" and _bare in _o_a and "4~8 sentences" in _o_a
+      and "overrides" in _o_a)
+check("L4b 追加时按语种换措辞（中文提示词不会突然冒出一句英文指令）",
+      QM._apply_desc_length(_bare, _c30, "zh")[0].rstrip().endswith("长度限制。"))
+check("L4c 「10~30 tags」不会被误当成「句数~字数」条款改掉（只认 sentences/句 + words/字）",
+      "10~30 tags" in _o_a)
+check("L4d 空文本 / 空档位 -> 原样返回，标成 keep",
+      QM._apply_desc_length("", _c30, "en")[1] == "keep"
+      and QM._apply_desc_length(_bare, None, "en") == (_bare, "keep"))
+
+check("L5a token 估算随字数单调递增",
+      QM._tokens_for_words(450, "en") > QM._tokens_for_words(100, "en"))
+check("L5b 同一字数目标下英文要的 token 比中文多（1 word ≈ 1.6 tok vs 1 字 ≈ 1.15）",
+      QM._tokens_for_words(250, "en") > QM._tokens_for_words(250, "zh"))
+check("L5c long 档要的 token 已经超过默认 256 —— 不抬就会被硬截断（这就是联动的原因）",
+      QM._tokens_for_words(250, "en") > 256, str(QM._tokens_for_words(250, "en")))
+
+_lt = NODE.INPUT_TYPES()["optional"]
+check("L6a desc_length 默认 preset（不选就不改变任何旧行为）",
+      _lt["desc_length"][1]["default"] == "preset", str(_lt["desc_length"][1]["default"]))
+check("L6b desc_words 默认空串", _lt["desc_words"][1]["default"] == "")
+check("L6c desc_length 的选项与代码里的档位表一致（不会出现选了没反应的档）",
+      list(_lt["desc_length"][0]) == QM._DESC_LENGTH_CHOICES)
+
+# 注意别拿 30~80 去覆盖原文的 30~80 —— 文本一样、指纹当然也一样，
+# 那样测出来的是「替换成同值」而不是「换档位」。用 long 才动得起来。
+_r0 = {"lang": "zh", "format": "raw", "prompt": _p_zh, "refine": ""}
+_r1 = dict(_r0, prompt=QM._apply_desc_length(
+    _p_zh, QM._DESC_LENGTH_TABLE["long"], "zh")[0])
+check("L7a 换档位确实改到了提示词文本（否则 L7b 测不出东西）", _r1["prompt"] != _r0["prompt"])
+check("L7b 换了长度档位 -> 配置指纹跟着变（refine 模式不会因为「txt 没变」跳过长档重做）",
+      QM._refine_cfg_sig("photoreal_zh", _r0, 0)
+      != QM._refine_cfg_sig("photoreal_zh", _r1, 0))
+check("L7c 没换档位时指纹稳定（同一份配置两次算出来必须一样，否则每次都会重跑）",
+      QM._refine_cfg_sig("photoreal_zh", _r0, 0)
+      == QM._refine_cfg_sig("photoreal_zh", dict(_r0), 0))
+
+_hs_src = inspect.getsource(NODE.tag_folder)
+check("L8a 长度档位在算 cfg 指纹**之前**生效（顺序反了 = 换档位不会触发重做）",
+      _hs_src.index("_apply_desc_length(") < _hs_src.index('r["cfg"] = _refine_cfg_sig'))
+check("L8b 生成调用统一用抬升后的 max_new_tokens_eff（原始值只在估算处出现一次）",
+      _hs_src.count("int(max_new_tokens)") == 1 and _hs_src.count("max_new_tokens_eff") >= 4,
+      f"raw={_hs_src.count('int(max_new_tokens)')} eff={_hs_src.count('max_new_tokens_eff')}")
+check("L8c 报告头会写明当前长度档位（否则用户看不出档位到底生效没）",
+      "描述长度    : " in _hs_src)
+check("L8d 长度档位与字符上限冲突时会提醒（long 档 + max_output_chars=80 是自相矛盾）",
+      "比长度档位的下限" in _hs_src)
 
 # ---- 收尾 ----
 print()
