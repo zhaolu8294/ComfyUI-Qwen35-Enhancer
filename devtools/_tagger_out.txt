@@ -9,7 +9,7 @@ A) 纯函数：扩展名 / 路径 / 扫描 / txt 同名 / 标签清洗
   [OK ] 扩展名解析：全是垃圾字符也退回默认
   [OK ] 扩展名解析：不会把 '..' 当成扩展名
   [OK ] 空 folder_path 明确报错（不静默跳过整个任务）  -> folder_path 是空的。请填图片所在文件夹的路径，例如 E:\datas
-  [OK ] 不存在的目录明确报错  -> \qwen35_tagger_9og7d6d4\不存在的目录
+  [OK ] 不存在的目录明确报错  -> \qwen35_tagger_uwq8lkxq\不存在的目录
   [OK ] 路径带引号也能解析（从资源管理器复制常见）
   [OK ] input/ 前缀解析到 ComfyUI 的 input 目录
   [OK ] output/ 前缀解析到 ComfyUI 的 output 目录
@@ -150,7 +150,7 @@ F) 批量行为（假模型 + 真写盘）
 ==========================================================================
   --- dry_run 报告 ---
    | [Qwen35] ========== 批量打标 ==========
-   |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\d1
+   |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\d1
    |   推理后端    : transformers / HF 模型（torch 进程内）
    |   打标模式    : 从零打标
    |   系统提示词  : custom（custom，取节点上填写的文本）
@@ -177,7 +177,7 @@ F) 批量行为（假模型 + 真写盘）
   [OK ] 没有图片时：计数 0
   --- 正常批量报告 ---
    | [Qwen35] ========== 批量打标 ==========
-   |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\d3
+   |   文件夹      : C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\d3
    |   推理后端    : transformers / HF 模型（torch 进程内）
    |   打标模式    : 从零打标
    |   系统提示词  : custom（custom，取节点上填写的文本）
@@ -194,13 +194,13 @@ F) 批量行为（假模型 + 真写盘）
    |   成功 / 失败 : 4 / 0
    |   标签合计    : 16 个（平均 4.0 个/次）
    |   输出 token  : 16（平均 4.0 tok/次）
-   |   打标耗时    :   0.01s（0.00s/次，2028.3 tok/s）
+   |   打标耗时    :   0.01s（0.00s/次，2114.3 tok/s）
    |   首张 prefill:   0.00s（含 CUDA 预热与 kernel 编译，后续张比它快是正常的）
    |   加载模型    :   0.00s  (本次新加载)
    |   卸载其他模型:   0.00s
    |   卸载打标模型:   0.04s
    |   --------------------------------
-   |   合计        :   0.18s
+   |   合计        :   0.20s
    |   例          : im01.txt -> 1girl, solo, long_hair, blue_eyes
    |   例          : im02.txt -> 1girl, solo, long_hair, blue_eyes
    |   例          : im03.txt -> 1girl, solo, long_hair, blue_eyes
@@ -514,9 +514,9 @@ K  GGUF 后端（llama.cpp / llama-server）
   [OK ] K7d enable_thinking=True 时不注入 chat_template_kwargs
   [OK ] K7e mime 按扩展名推断
   [OK ] K7f 包成列表 [ (mime, bytes) ] 也照样工作（上面测的是裸元组）
-  [OK ] K8a 找不到 llama-server.exe -> 报错带文件名与下载指引  -> 找不到 llama-server.exe：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\nope.exe
-  [OK ] K8b 找不到 gguf -> 报错里带该路径  -> 找不到 GGUF 模型：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\nope.gguf
-  [OK ] K8c mmproj 路径写错时单独报错（不会退化成一堆难懂的 llama.cpp 报错）  -> 找不到 mmproj：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\nope_mm.gguf
+  [OK ] K8a 找不到 llama-server.exe -> 报错带文件名与下载指引  -> 找不到 llama-server.exe：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\nope.exe
+  [OK ] K8b 找不到 gguf -> 报错里带该路径  -> 找不到 GGUF 模型：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\nope.gguf
+  [OK ] K8c mmproj 路径写错时单独报错（不会退化成一堆难懂的 llama.cpp 报错）  -> 找不到 mmproj：C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\nope_mm.gguf
   [OK ] K9a 无 mmproj：按「权重×1.10 + 1.2GiB」估  -> 1204
   [OK ] K9b 有 mmproj：把它的体积也算进去  -> 1208
   [OK ] K9c backend 不是 GGUF 节点输出时退回保守默认值，不抛异常
@@ -539,10 +539,10 @@ K  GGUF 后端（llama.cpp / llama-server）
   [OK ] K13e 断点续传：拿 .part 的大小发 Range 请求，接着下完  -> downloaded / 半截 100000 -> 300000
   [OK ] K13f 续传出来的内容和整段下的一模一样
   [OK ] K13g 下完大小对不上 -> 报错，并保留 .part 供下次续传  -> 下载不完整：拿到 300,000 字节，应该是 304,096 字节（差 4,096）。
-  [OK ] K13h 本地已有同名文件 -> 直接用，一个网络请求都不发（离线可用）  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\searchdir\mmproj-model-bf16.gguf
+  [OK ] K13h 本地已有同名文件 -> 直接用，一个网络请求都不发（离线可用）  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\searchdir\mmproj-model-bf16.gguf
   [OK ] K13i 空地址 -> ensure_file 返回空串（「不下」是这个函数的合法入参）
   [OK ] K13j 空地址直接调 download_file -> 明确报错  -> 下载地址是空的
-  [OK ] K14a provide()：mmproj 缺失时自动下到主干模型同一目录  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\searchdir2\mmproj-model-bf16.gguf
+  [OK ] K14a provide()：mmproj 缺失时自动下到主干模型同一目录  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\searchdir2\mmproj-model-bf16.gguf
   [OK ] K14b 下完后 report 里不再报「没选 mmproj」
   [OK ] K14c 下完后 label 里带上了 mmproj 文件名  -> main.gguf  +  mmproj-model-bf16.gguf
   [OK ] K14d auto_download=False 时绝不下载，仍然报警
@@ -606,7 +606,7 @@ M) 双语互同步（改中文 -> 自动回灌英文；反向也认）
   [OK ] M4a 两份都与记录一致 -> 一个 job 都不发（不白跑一遍模型）  -> [] / (0, 0, 2, 0, 0)
   [OK ] M4b 只改了中文 -> 中文照常校订 + 英文以中文为源同步  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
   [OK ] M4c **源排在目标前面**（目标要翻的是源校订之后的版本）  -> [('zh', '（校订原有）'), ('en', '（同步中文）')]
-  [OK ] M4d 同步 job 记着源文件路径（执行时现读，不缓存旧内容）  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4\m_b\im01_zh.txt
+  [OK ] M4d 同步 job 记着源文件路径（执行时现读，不缓存旧内容）  -> C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq\m_b\im01_zh.txt
   [OK ] M4e 过时的那份不当初稿，只留着备份用
   [OK ] M4f 统计：校订 1 次、同步 1 次、无跳过  -> (1, 0, 0, 1, 0)
   [OK ] M4g 只改了英文 -> 英文校订 + 中文以英文为源同步（双向，不是只往下灌）  -> [('en', '（校订原有）'), ('zh', '（同步英文）')]
@@ -699,7 +699,7 @@ O) GGUF 思考兜底（正文被 think 挤空时自动关掉思考重跑）
   [OK ] O5b 报告里有「思考兜底」统计行（跑了几条被救回来）
   [OK ] O5c 「输出为空」的提示会指向 enable_thinking（否则用户猜不到该关哪个开关）
 
-  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_9og7d6d4
+  临时目录: C:\Users\ADMIN\AppData\Local\Temp\qwen35_tagger_uwq8lkxq
   已清理临时目录
 
 ==========================================================================
