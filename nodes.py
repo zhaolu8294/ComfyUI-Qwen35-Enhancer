@@ -4558,9 +4558,12 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
             f"  输出格式    : "
             + "、".join(f"{_lang_word(r.get('lang'))}={r['format']}" for r in runs),
             f"  思考模式    : "
-            + ("开 —— 生成前先推理。GGUF 后端下很容易把正文挤空：llama-server 把 "
-               "think 分流到独立字段，预算烧完就只剩空串（实测 4.4s/次 → 39.9s/次）；"
-               "真挤空时会自动关掉重跑一次。打标建议直接关掉"
+            + (f"开 —— 生成前先推理。GGUF 后端下思考极易把正文挤空：llama-server 把 "
+               f"think 分流到独立字段，预算烧完正文就只剩空串；而思考本身实测要 "
+               f"900~1500 tok，上限不足 2048 时多数会被挤空（本次上限 "
+               f"{int(max_new_tokens_eff)}）。挤空后会自动关掉思考重跑一次 —— "
+               f"结果是拿到手了，但那是「不思考」的版本，思考的 token 白烧："
+               f"实测同一条 4.4s/次 → 39.9s/次。要么直接关掉，要么把生成上限抬过 2048"
                if bool(enable_thinking) else
                "关 —— 直接出结果（推荐）"),
             f"  一轮自检    : "
@@ -4945,7 +4948,14 @@ class Qwen35BatchImageTagger(Qwen35PromptEnhancer):
         if n_think:
             lines.append(
                 f"  思考兜底    : {n_think} 条的正文被思考块挤空，已自动关掉 "
-                f"enable_thinking 重跑，结果有效（想省掉这次重跑就把思考关掉）"
+                f"enable_thinking 重跑，结果有效"
+            )
+            lines.append(
+                f"  ⓘ 白烧掉    : 约 {n_think * int(max_new_tokens_eff)} tok（这 "
+                f"{n_think} 条每条约 {int(max_new_tokens_eff)} tok 的思考一个字没用上）。"
+                f"注意最终描述来自「关掉思考」的重跑 —— 付了思考的钱、拿的是不思考的结果。"
+                f"把「思考模式」关掉就能拿到同一份结果、快约 5 倍；"
+                f"想真用上思考，要把生成上限抬到 2048 以上。"
             )
         if n_cut:
             lines.append(
