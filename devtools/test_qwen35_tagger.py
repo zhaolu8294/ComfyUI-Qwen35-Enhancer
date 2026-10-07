@@ -1481,11 +1481,14 @@ import gguf_backend as GBm         # noqa: E402
 
 
 class _FakeAPI(_httpsrv.BaseHTTPRequestHandler):
-    """假的 llama-server：只实现 /health 和 /v1/chat/completions。"""
+    """假的 llama-server：只实现 /health 和 /v1/chat/completions。
+    另外开了 /file/<name> 用来测下载（支持 Range，这样断点续传才测得出来）。"""
 
     payloads = []
     health_code = 200
     health_body = {"status": "ok"}
+    files = {}
+    hits = []
 
     def log_message(self, *a):
         pass
@@ -1498,13 +1501,71 @@ class _FakeAPI(_httpsrv.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _file_name(self):
+        return self.path[len("/file/"):]
+
+    def do_HEAD(self):
+        if self.path.startswith("/file/"):
+            name = self._file_name()
+            _FakeAPI.hits.append(("HEAD", name))
+            data = _FakeAPI.files.get(name)
+            if data is None:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+            else:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _serve_file(self, name):
+        data = _FakeAPI.files[name]
+        rng = self.headers.get("Range") or ""
+        start = 0
+        if rng.startswith("bytes="):
+            try:
+                start = int(rng[len("bytes="):].split("-")[0] or 0)
+            except ValueError:
+                start = 0
+        if start >= len(data):
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{len(data)}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = data[start:]
+        if start > 0:
+            self.send_response(206)
+            self.send_header("Content-Range",
+                             f"bytes {start}-{len(data) - 1}/{len(data)}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
+        if self.path.startswith("/file/"):
+            name = self._file_name()
+            _FakeAPI.hits.append(("GET", name))
+            if name not in _FakeAPI.files:
+                self._out({"error": "not found"}, 404)
+                return
+            self._serve_file(name)
+            return
         if self.path == "/health":
             self._out(_FakeAPI.health_body, _FakeAPI.health_code)
         else:
             self._out({"error": "not found"}, 404)
 
     def do_POST(self):
+        if self.path.startswith("/file/"):
+            self.do_GET()
+            return
         n = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(n)
         try:
@@ -1796,6 +1857,151 @@ check("K12b 扩写节点：GGUF 分支里先调了 _free_vram",
       "_free_vram" in _src_enh and "_gguf_need_mib" in _src_enh)
 check("K12c 腾显存时用的是 gguf 实际大小，而不是 HF 的 quant 档位",
       "_gguf_need_mib(backend)" in _src_tag and "_gguf_need_mib(backend)" in _src_enh)
+
+# ---- K13 缺件自动下载（假文件服务器，支持 Range）----
+_DL = os.path.join(TMP_ROOT, "dl")
+os.makedirs(_DL, exist_ok=True)
+_blob = bytes((i * 37 + 11) % 256 for i in range(300000))     # 300KB，内容可校验
+_FakeAPI.files = {"mmproj-model-bf16.gguf": _blob,
+                  "main.gguf": _blob,
+                  "huge.gguf": _blob}
+_FILE_URL = f"http://127.0.0.1:{FAKE_PORT}/file/mmproj-model-bf16.gguf"
+
+check("K13a 从地址里取文件名：query 与 URL 编码都能剥掉",
+      GBm.filename_from_url(_FILE_URL) == "mmproj-model-bf16.gguf"
+      and GBm.filename_from_url("https://x.com/a/b/m.gguf?download=true") == "m.gguf"
+      and GBm.filename_from_url("https://x.com/a/my%20m.gguf") == "my m.gguf"
+      and GBm.filename_from_url("") == "")
+check("K13b remote_size 走 HEAD 拿到总长度",
+      GBm.remote_size(_FILE_URL) == len(_blob), str(GBm.remote_size(_FILE_URL)))
+
+# 一次性下完
+_d1 = os.path.join(_DL, "one.gguf")
+_p1, _how1 = GBm.download_file(_FILE_URL, _d1)
+check("K13c 完整下载：内容一致、.part 不留",
+      _how1 == "downloaded" and open(_d1, "rb").read() == _blob
+      and not os.path.exists(_d1 + ".part"), _how1)
+
+# 已经下好了就别再下
+_FakeAPI.hits = []
+_p2, _how2 = GBm.download_file(_FILE_URL, _d1)
+_only_head = all(m == "HEAD" for m, _n in _FakeAPI.hits)
+check("K13d 目标已完整存在 -> 判定 already，只探一次大小、不重下",
+      _how2 == "already" and _only_head and _FakeAPI.hits != [],
+      f"{_how2} / hits={_FakeAPI.hits}")
+
+# 断点续传：先塞半截 .part，看它是不是接着下（而不是从头下）
+_d3 = os.path.join(_DL, "resume.gguf")
+_half = len(_blob) // 3
+with open(_d3 + ".part", "wb") as _fh:
+    _fh.write(_blob[:_half])
+_FakeAPI.hits = []
+_p3, _how3 = GBm.download_file(_FILE_URL, _d3)
+_saw_range = any(m == "GET" for m, _n in _FakeAPI.hits)
+check("K13e 断点续传：拿 .part 的大小发 Range 请求，接着下完",
+      _how3 == "downloaded" and open(_d3, "rb").read() == _blob and _saw_range,
+      f"{_how3} / 半截 {_half} -> {os.path.getsize(_d3)}")
+check("K13f 续传出来的内容和整段下的一模一样",
+      open(_d3, "rb").read() == open(_d1, "rb").read())
+
+# 大小对不上：要报错，并且把 .part 留着方便再续
+_d4 = os.path.join(_DL, "short.gguf")
+_orig_rs = GBm.remote_size
+GBm.remote_size = lambda *a, **k: len(_blob) + 4096        # 假装远端更大
+try:
+    GBm.download_file(_FILE_URL, _d4)
+    _m3 = ""
+except GBm.GgufError as e:
+    _m3 = str(e)
+finally:
+    GBm.remote_size = _orig_rs
+check("K13g 下完大小对不上 -> 报错，并保留 .part 供下次续传",
+      "不完整" in _m3 and os.path.exists(_d4 + ".part") and not os.path.exists(_d4),
+      _m3.splitlines()[0] if _m3 else "(没抛错)")
+
+# ensure_file：搜索路径里已有同名文件就别下
+_SD = os.path.join(TMP_ROOT, "searchdir")
+os.makedirs(_SD, exist_ok=True)
+with open(os.path.join(_SD, "mmproj-model-bf16.gguf"), "wb") as _fh:
+    _fh.write(_blob)
+_orig_dirs = GBm.gguf_search_dirs
+GBm.gguf_search_dirs = lambda *a, **k: [_SD]
+try:
+    _FakeAPI.hits = []
+    _got = GBm.ensure_file(_FILE_URL, _DL)
+    _skip_ok = (os.path.normcase(_got) == os.path.normcase(
+        os.path.join(_SD, "mmproj-model-bf16.gguf")) and _FakeAPI.hits == [])
+finally:
+    GBm.gguf_search_dirs = _orig_dirs
+check("K13h 本地已有同名文件 -> 直接用，一个网络请求都不发（离线可用）",
+      _skip_ok, str(_got))
+
+check("K13i 空地址 -> ensure_file 返回空串（「不下」是这个函数的合法入参）",
+      GBm.ensure_file("", _DL) == "")
+try:
+    _m4 = ""
+    GBm.download_file("", os.path.join(_DL, "x.gguf"))
+except GBm.GgufError as e:
+    _m4 = str(e)
+check("K13j 空地址直接调 download_file -> 明确报错", "空的" in _m4, _m4)
+
+# ---- K14 端到端：provide() 发现缺 mmproj 就自己下 ----
+_SD2 = os.path.join(TMP_ROOT, "searchdir2")
+os.makedirs(_SD2, exist_ok=True)
+with open(os.path.join(_SD2, "main.gguf"), "wb") as _fh:
+    _fh.write(_blob)
+_orig_dirs = GBm.gguf_search_dirs
+GBm.gguf_search_dirs = lambda *a, **k: [_SD2]
+try:
+    _model_label = GBm.gguf_model_choices()[0]
+    _FakeAPI.hits = []
+    _out = QM.Qwen35GGUFServer().provide(
+        model=_model_label,
+        mmproj=GBm._NONE_MMPROJ,                      # 故意选「无投影」
+        server_exe="auto",
+        auto_download=True,
+        model_url="",                                 # 主干已有，不该触发下载
+        mmproj_url=_FILE_URL,
+    )[0]
+    _cfg = _out["cfg"]
+    _want = os.path.join(_SD2, "mmproj-model-bf16.gguf")
+    _dl_ok = (os.path.normcase(_cfg["mmproj"]) == os.path.normcase(_want)
+              and os.path.isfile(_want)
+              and open(_want, "rb").read() == _blob)
+finally:
+    GBm.gguf_search_dirs = _orig_dirs
+check("K14a provide()：mmproj 缺失时自动下到主干模型同一目录",
+      _dl_ok, str(_cfg.get("mmproj")))
+check("K14b 下完后 report 里不再报「没选 mmproj」",
+      "没选 mmproj" not in _out["report"])
+check("K14c 下完后 label 里带上了 mmproj 文件名",
+      "mmproj-model-bf16.gguf" in _out["label"], _out["label"])
+
+# 关掉自动下载时必须一个字都不下
+GBm.gguf_search_dirs = lambda *a, **k: [_SD2]
+try:
+    _mp = os.path.join(_SD2, "mmproj-model-bf16.gguf")
+    if os.path.exists(_mp):
+        os.remove(_mp)
+    _FakeAPI.hits = []
+    _out2 = QM.Qwen35GGUFServer().provide(
+        model=GBm.gguf_model_choices()[0],
+        mmproj=GBm._NONE_MMPROJ, server_exe="auto",
+        auto_download=False, model_url="", mmproj_url=_FILE_URL,
+    )[0]
+finally:
+    GBm.gguf_search_dirs = _orig_dirs
+check("K14d auto_download=False 时绝不下载，仍然报警",
+      _out2["cfg"]["mmproj"] == "" and _FakeAPI.hits == []
+      and "没选 mmproj" in _out2["report"])
+
+check("K14e 后端节点默认 mmproj_url 已指向 Qwen3.8 的视觉投影（开箱即用）",
+      "mmproj-model-bf16.gguf" in _kit["optional"]["mmproj_url"][1]["default"]
+      and "hf-mirror.com" in _kit["optional"]["mmproj_url"][1]["default"],
+      _kit["optional"]["mmproj_url"][1]["default"])
+check("K14f auto_download 默认开、model_url 默认空（16GB 不该自动下）",
+      _kit["optional"]["auto_download"][1]["default"] is True
+      and _kit["optional"]["model_url"][1]["default"] == "")
 
 _fake_srv.shutdown()
 

@@ -280,6 +280,213 @@ def path_from_label(label):
 
 
 # ---------------------------------------------------------------------------
+# 下载：让节点自己把缺的文件取回来
+# ---------------------------------------------------------------------------
+# 为什么要有这段：Qwen3.8 要两个文件（主干 + mmproj），少下 mmproj 是个**静默失效**——
+# llama-server 会高高兴兴加载成纯文本模型，打标时图片被直接丢掉，日志里看不出异常。
+# 让节点在发现缺件时自己去拿，比让人记住去浏览器里点两下可靠。
+#
+# 用 hf-mirror.com（HuggingFace 国内镜像）而不是 huggingface.co：本机直连 HF 很慢，
+# 镜像走 https 直连即可，不需要代理。
+DEFAULT_MODEL_URL = (
+    "https://hf-mirror.com/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF"
+    "/resolve/main/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf?download=true"
+)
+DEFAULT_MMPROJ_URL = (
+    "https://hf-mirror.com/huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF"
+    "/resolve/main/mmproj-model-bf16.gguf?download=true"
+)
+
+
+def filename_from_url(url):
+    """从下载地址里取出文件名。带 query（`?download=true`）和 URL 编码都能处理。"""
+    from urllib.parse import unquote, urlparse
+    p = urlparse(str(url or "").strip()).path
+    return unquote(os.path.basename(p)).strip()
+
+
+def dir_of(path):
+    """决定「新下下来的文件放哪」：优先跟已有文件同目录，否则返回 ""（交给默认目录）。"""
+    p = str(path or "").strip()
+    if p and os.path.isfile(p):
+        return os.path.dirname(p)
+    return ""
+
+
+def default_download_dir():
+    """默认落地目录：第一个存在且可写的搜索目录；都不行就建 ComfyUI 的 models/LLM。"""
+    for d in gguf_search_dirs():
+        if os.path.isdir(d) and os.access(d, os.W_OK):
+            return d
+    d = os.path.join(_models_dir(), "LLM")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def find_existing(name, max_depth=2):
+    """在搜索路径里找同名文件。用户可能早就手动下过了，别重复下。"""
+    target = str(name or "").strip().lower()
+    if not target:
+        return ""
+    for base in gguf_search_dirs():
+        if not os.path.isdir(base):
+            continue
+        root = os.path.abspath(base)
+        base_depth = root.rstrip("\\/").count(os.sep)
+        for cur, dirs, files in os.walk(root):
+            if cur.rstrip("\\/").count(os.sep) - base_depth >= max_depth:
+                dirs[:] = []
+            for f in files:
+                if f.lower() == target:
+                    return os.path.join(cur, f)
+    return ""
+
+
+def remote_size(url, timeout=30):
+    """问服务器这个文件多大。拿不到就返回 -1（表示「无法校验」，不是错误）。"""
+    if requests is None:
+        return -1
+    try:
+        r = requests.head(url, allow_redirects=True, timeout=timeout)
+        n = r.headers.get("Content-Length")
+        if n:
+            return int(n)
+    except Exception:
+        pass
+    # 有些镜像不吃 HEAD，用「只取第 0 个字节」换 Content-Range 里的总长度
+    try:
+        r = requests.get(url, stream=True, allow_redirects=True,
+                         headers={"Range": "bytes=0-0"}, timeout=timeout)
+        try:
+            cr = r.headers.get("Content-Range") or ""      # bytes 0-0/931145888
+            if "/" in cr:
+                return int(cr.rsplit("/", 1)[1])
+            n = r.headers.get("Content-Length")
+            if n and r.status_code == 200:
+                return int(n)
+        finally:
+            r.close()
+    except Exception:
+        pass
+    return -1
+
+
+def download_file(url, dest, on_status=None, resume=True, timeout=(30, 600)):
+    """把 url 下到 dest。返回 (最终路径, "already" / "downloaded")。
+
+    几个刻意的设计：
+      · **先写 dest.part 再原子改名** —— 中途断了不会留下一个「看起来下好了但其实是半截」
+        的文件，那种半截 gguf 会被当成正常模型喂给 llama.cpp，报一堆难懂的错。
+      · **断点续传**：重跑一次会拿 .part 已有的大小发 Range 请求接着下。
+        16GB 的模型在慢线上一断就得重来，这个钱不能省。
+      · **下完校验总大小**，对不上就报错并保留 .part，方便再续。
+    """
+    if requests is None:
+        raise GgufError("缺少 requests 库，无法下载")
+    url = str(url or "").strip()
+    if not url:
+        raise GgufError("下载地址是空的")
+    dest = os.path.abspath(dest)
+    part = dest + ".part"
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+    except OSError as e:
+        raise GgufError(f"建不了目录 {os.path.dirname(dest)}：{e}") from e
+
+    total = remote_size(url)
+
+    if os.path.isfile(dest) and os.path.getsize(dest) > 0:
+        if total <= 0 or os.path.getsize(dest) == total:
+            return dest, "already"
+
+    done = os.path.getsize(part) if (resume and os.path.isfile(part)) else 0
+    if not resume and os.path.isfile(part):
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        done = 0
+    if total > 0 and done >= total:
+        os.replace(part, dest)
+        return dest, "already"
+
+    headers = {"Range": f"bytes={done}-"} if done > 0 else {}
+    t0 = time.time()
+    try:
+        r = requests.get(url, stream=True, allow_redirects=True, headers=headers,
+                         timeout=timeout)
+    except Exception as e:
+        raise GgufError(f"下载失败（连不上）：{e}\n{url}") from e
+
+    try:
+        if r.status_code == 416 and done > 0:
+            # 服务器说范围越界 = 本地 .part 已经够了
+            r.close()
+            if total > 0 and os.path.getsize(part) == total:
+                os.replace(part, dest)
+                return dest, "already"
+            raise GgufError(
+                f"服务器拒绝了续传请求，但本地 .part（{os.path.getsize(part):,} 字节）"
+                f"和远端的 {total:,} 字节对不上。删掉\n  {part}\n再试一次。"
+            )
+        if r.status_code not in (200, 206):
+            raise GgufError(f"下载失败：HTTP {r.status_code}\n{url}")
+        # 200 = 服务器不认 Range，只能从头来
+        if r.status_code == 200 and done > 0:
+            done = 0
+        mode = "ab" if (done > 0 and r.status_code == 206) else "wb"
+        with open(part, mode) as fh:
+            for chunk in r.iter_content(chunk_size=1 << 20):
+                if not chunk:
+                    continue
+                fh.write(chunk)
+                done += len(chunk)
+                if on_status is not None:
+                    try:
+                        on_status(done, total, time.time() - t0)
+                    except Exception:
+                        pass
+    finally:
+        try:
+            r.close()
+        except Exception:
+            pass
+
+    size = os.path.getsize(part)
+    if total > 0 and size != total:
+        raise GgufError(
+            f"下载不完整：拿到 {size:,} 字节，应该是 {total:,} 字节"
+            f"（差 {total - size:,}）。\n再跑一次会从断点接着下，已下的部分不会白费。"
+        )
+    os.replace(part, dest)
+    return dest, "downloaded"
+
+
+def ensure_file(url, dest_dir="", on_status=None, resume=True):
+    """确保 url 指向的文件在本地有一份，返回它的绝对路径。
+
+    顺序：① 搜索路径里已有同名文件 -> 直接用；② 否则下到 dest_dir。
+    """
+    url = str(url or "").strip()
+    if not url:
+        return ""
+    name = filename_from_url(url)
+    if not name:
+        raise GgufError(f"这个地址里看不出文件名，不知道存成什么好：\n{url}")
+    hit = find_existing(name)
+    if hit:
+        logger.info("[Qwen35] 已有同名文件，跳过下载：%s", hit)
+        return hit
+    dest = os.path.join(dest_dir or default_download_dir(), name)
+    path, how = download_file(url, dest, on_status=on_status, resume=resume)
+    logger.info("[Qwen35] %s -> %s", "已存在" if how == "already" else "下载完成", path)
+    return path
+
+
+# ---------------------------------------------------------------------------
 # 空闲端口
 # ---------------------------------------------------------------------------
 def _free_port():

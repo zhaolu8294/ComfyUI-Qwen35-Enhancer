@@ -4206,6 +4206,17 @@ class Qwen35GGUFServer:
       · llama-<build>-bin-win-cuda-13.4-x64.zip      （含 llama-server.exe）
       · cudart-llama-bin-win-cuda-13.4-x64.zip       （CUDA 运行时 dll，必须一起）
     两个都解压到同一个目录（例如 H:\\AI\\llama.cpp\\），重启 ComfyUI 即可在下拉里选到。
+
+    **模型不用手动下**：`mmproj_url` 默认已经填好 Qwen3.8-27B 视觉投影的地址
+    （hf-mirror 国内镜像）。节点发现本地没有就会自己去下，先写 `.part` 再原子改名，
+    断了再跑一次会**断点续传**（16GB 级别的文件在慢线上一断就得重来，这个不能省）。
+
+    判据是「**文件真的不在本地**」，不是「下拉里没选」：你早就手动下好的话，
+    节点会在所有搜索路径里找到同名文件直接用。
+
+    **联网只发生在缺件的那一刻** —— 文件齐了之后靠本地扫描直接命中，
+    一个网络请求都不发，完全离线可用。想彻底禁掉联网：清空 `mmproj_url`，
+    或把 `auto_download` 关掉。
     """
 
     @classmethod
@@ -4266,6 +4277,26 @@ class Qwen35GGUFServer:
                     "tooltip": "附加命令行参数，原样追加到 llama-server。"
                                "例如 --image-max-tokens 1024 可以限制视觉 token 数。",
                 }),
+                # ---- 下面三个是「缺件自动补」----
+                # 放在最后：设一次就不用再动，但少了它 mmproj 会静默缺失。
+                "auto_download": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "上面选的文件在本地找不到时，按下面的地址自动下载。\n"
+                               "下载先写 .part 再原子改名，断了再跑一次会**断点续传**。",
+                }),
+                "model_url": ("STRING", {
+                    "default": "",
+                    "tooltip": "主干 gguf 的下载地址。默认留空 —— 16GB 级别的东西，"
+                               "建议确认好地址再填。填了且本地找不到该文件时才会下。",
+                }),
+                "mmproj_url": ("STRING", {
+                    "default": (gguf_backend.DEFAULT_MMPROJ_URL
+                                if gguf_backend else ""),
+                    "tooltip": "视觉投影 mmproj 的下载地址（默认已填好 Qwen3.8-27B 那个，"
+                               "约 888MiB）。**打标必须**：缺了它 llama-server 会安静地"
+                               "加载成纯文本模型，图片被直接丢掉。\n"
+                               "要故意用纯文本模式，把这里清空即可。",
+                }),
             },
         }
 
@@ -4276,9 +4307,31 @@ class Qwen35GGUFServer:
     OUTPUT_NODE = False
     DESCRIPTION = "启动并持有 llama-server，供扩写 / 打标节点连线的 GGUF 后端"
 
+    @staticmethod
+    def _fetch(url, dest_dir, pbar, what):
+        """下载一个文件，边下边把进度报给前端。返回落地路径。"""
+        t0 = time.perf_counter()
+
+        def _status(done, total, el):
+            mb = done / (1024 * 1024)
+            speed = (done / el / (1024 * 1024)) if el > 0.5 else 0.0
+            if total and total > 0:
+                pct = done * 100.0 / total
+                pbar.message(f"{what} 下载中 {pct:.1f}%（{mb:.0f} / "
+                             f"{total / (1024 * 1024):.0f} MB · {speed:.1f} MB/s）")
+                pbar.mark(pct)
+            else:
+                pbar.message(f"{what} 下载中 {mb:.0f} MB · {speed:.1f} MB/s")
+
+        pbar.message(f"{what} 本地没有，开始下载：{url}")
+        path = gguf_backend.ensure_file(url, dest_dir, on_status=_status)
+        pbar.message(f"{what} 已就绪：{path}（用时 {time.perf_counter() - t0:.0f}s）")
+        return path
+
     def provide(self, model, mmproj, server_exe, context_size=8192,
                 kv_cache_type="q8_0", n_gpu_layers=-1, parallel=1,
-                flash_attn=True, reasoning_format="deepseek", extra_args=""):
+                flash_attn=True, reasoning_format="deepseek", extra_args="",
+                auto_download=True, model_url="", mmproj_url="", unique_id=None):
         if gguf_backend is None:
             raise RuntimeError(
                 "gguf_backend.py 没加载成功，请确认它和 nodes.py 在同一个目录下。"
@@ -4286,6 +4339,25 @@ class Qwen35GGUFServer:
         m = gguf_backend.path_from_label(model)
         pj = gguf_backend.path_from_label(mmproj)      # 「（无 / 纯文本）」-> ""
         sx = gguf_backend.server_from_choice(server_exe)
+
+        # ---- 缺件自动补 ----
+        # 判据是「文件真的不在本地」而不是「下拉里没选」：用户早就手动下好的话
+        # ensure_file 会在搜索路径里找到同名文件直接用，不会白下一遍。
+        if auto_download:
+            mu = str(model_url or "").strip()
+            pu = str(mmproj_url or "").strip()
+            need_m = bool(mu) and not os.path.isfile(m or "")
+            need_p = bool(pu) and not pj
+            if need_m or need_p:
+                pbar = _ProgressReporter(node_id=unique_id, enabled=True, interval=1.0)
+                try:
+                    if need_m:
+                        m = self._fetch(mu, gguf_backend.dir_of(m), pbar, "主干模型")
+                    if need_p:
+                        # mmproj 跟主干放同一层，以后一眼能看全
+                        pj = self._fetch(pu, gguf_backend.dir_of(m), pbar, "视觉投影 mmproj")
+                finally:
+                    pbar.finish()
 
         cfg = {
             "server_exe": sx,

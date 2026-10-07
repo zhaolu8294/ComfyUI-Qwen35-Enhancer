@@ -263,6 +263,15 @@ pip install flash-linear-attention
 - `H:\AI\LLM\`
 - 或设环境变量 `QWEN35_GGUF_DIR` 指向任意目录（多个用 `;` 分隔）
 
+> **mmproj 不用手动下 —— 节点会自己取。**
+> 下一节的 `mmproj_url` 默认已填好上面那个地址，节点发现本地没有就会自己去下
+> （先写 `.part` 再原子改名，断了再跑一次会**断点续传**）。
+>
+> **联网只发生在「文件确实不在本地」的那一刻。** 文件下好之后，
+> 节点靠本地扫描（`find_existing()`）直接命中，**一个网络请求都不会发**，
+> 之后完全是离线的 —— llama-server 是本地进程，GGUF 也在本地磁盘上。
+> 想彻底禁掉联网：把 `mmproj_url` 清空，或把 `auto_download` 关掉。
+
 ### 3. 接线
 
 新节点 **`GGUF Backend (llama.cpp) - Qwen3.8 / 27B`**（分类 `Qwen35/Backend`）：
@@ -279,6 +288,14 @@ pip install flash-linear-attention
 | `flash_attn` | true | 更省 KV 也更快 |
 | `reasoning_format` | `deepseek` | 把思考块引到独立的 `reasoning_content`，`content` 里只剩最终答案 |
 | `extra_args` | 空 | 原样追加，例如 `--image-max-tokens 1024` 限制视觉 token 数 |
+| `auto_download` | `true` | 上面选的文件本地找不到时，按下面的地址自动下。断了再跑一次会断点续传 |
+| `model_url` | 空 | 主干 gguf 的下载地址。**默认留空** —— 16GB 级别的东西，建议确认好地址再填 |
+| `mmproj_url` | 已填好 | 视觉投影的地址（Qwen3.8-27B 那个，约 888MiB）。清空 = 不下 |
+
+`auto_download` 的判据是**「文件真的不在本地」**，而不是「下拉里没选」：
+你早就手动下好的话，节点会在所有搜索路径里找到同名文件直接用，不会白下一遍。
+
+实测下载速度（hf-mirror，本机直连）：mmproj 888MiB 用 78s，11.6 MB/s。
 
 把这个节点的 `backend` 输出，连到**扩写节点**或**批量打标节点**的 `backend` 输入即可。
 
